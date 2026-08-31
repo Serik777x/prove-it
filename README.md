@@ -23,6 +23,26 @@ $ prove-it verify claims.yaml
 Exit `0` every claim proved, `1` a claim failed, `2` the claims file was
 malformed.
 
+## "Done" means landed
+
+A filesystem claim checks the file **as it exists at the last commit that
+reached the remote**, not as it sits on your disk. The failure this tool
+was built for is a write receipt that returns `ok` for a commit that never
+got pushed -- and against that, a working-tree check passes every time,
+because the file really is on disk with really the right bytes.
+
+```yaml
+- type: file_contains
+  path: notes.md
+  text: shipped
+  stage: worktree   # opt in to the weaker question, on purpose
+```
+
+Outside a git repo the claim falls back to the working tree and says so.
+Inside a repo with nothing to compare against -- no remote, no upstream,
+no commits -- it refuses to answer rather than pass. `SPEC.md` has the
+full rules; the call itself is DEC-002, still `proposed`.
+
 ## Why
 
 Completion claims are trusted at face value today. Nothing compares them
@@ -34,7 +54,10 @@ vault-house `20_projects/20.71-prove-it/` for purpose and decisions.
 ## Status
 
 Early. M001 (grammar + parser) is complete and tested. M002 (checkers) is
-in progress. See the project state file for exact position.
+in progress: the four filesystem checkers are written and now resolve
+through the DEC-002 pushed-state layer; `frontmatter_equals`, `glob_count`,
+`command_exits`, `git_head_is`, `git_clean` and `git_pushed` are not
+written. See the project state file for exact position.
 
 ## Develop
 

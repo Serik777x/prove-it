@@ -18,6 +18,22 @@ UNIVERSAL_FIELDS: dict[str, type] = {
     "id": str,     # caller's own handle for this claim, echoed in output
 }
 
+# Resolution stages -- WHERE a filesystem claim reads reality from.
+# DEC-002: `pushed` is the default. The failure this tool exists to catch
+# is a lying write receipt, and against that failure a working-tree read
+# proves nothing -- the file IS on disk with exactly the claimed content.
+# `worktree` is the opt-in escape hatch, never the default.
+STAGE_PUSHED = "pushed"
+STAGE_WORKTREE = "worktree"
+DEFAULT_STAGE = STAGE_PUSHED
+ALLOWED_STAGES: tuple[str, ...] = (STAGE_PUSHED, STAGE_WORKTREE)
+
+# Carried by every fs claim type that HAS a checker honouring it. A type
+# whose checker cannot yet resolve a stage must NOT declare the field --
+# an accepted-then-ignored field is the silent pass this grammar exists
+# to prevent. frontmatter_equals and glob_count add it when written.
+_STAGED: dict[str, tuple] = {"stage": (str, DEFAULT_STAGE)}
+
 
 @dataclass(frozen=True)
 class ClaimType:
@@ -51,20 +67,22 @@ _ALL = [
     _t("path_exists", "fs",
        "a path is present on disk",
        {"path": str},
-       {"kind": (str, "any")}),                   # any | file | dir
+       {"kind": (str, "any"), **_STAGED}),        # any | file | dir
 
     _t("path_absent", "fs",
        "a path is NOT present on disk",
-       {"path": str}),
+       {"path": str},
+       dict(_STAGED)),
 
     _t("path_moved", "fs",
        "src is gone and dst is present -- a move, not a copy",
-       {"src": str, "dst": str}),
+       {"src": str, "dst": str},
+       dict(_STAGED)),
 
     _t("file_contains", "fs",
        "a file exists and contains a literal string",
        {"path": str, "text": str},
-       {"count": (int, None)}),                   # exact occurrence count
+       {"count": (int, None), **_STAGED}),        # exact occurrence count
 
     _t("frontmatter_equals", "fs",
        "a markdown file's YAML frontmatter field equals a value",
@@ -98,3 +116,8 @@ _ALL = [
 CLAIM_TYPES: dict[str, ClaimType] = {t.name: t for t in _ALL}
 
 KNOWN_TYPES: tuple[str, ...] = tuple(sorted(CLAIM_TYPES))
+
+# Types whose checker resolves through a stage. Used by the tests to keep
+# this list and the declared `stage` fields from drifting apart.
+STAGED_TYPES: tuple[str, ...] = tuple(
+    sorted(n for n, t in CLAIM_TYPES.items() if "stage" in t.optional))
