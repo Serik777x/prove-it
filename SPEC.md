@@ -196,3 +196,8 @@ a directory symlink or junction pointing into one is mapped back to its
 physical repository-relative path. An alias therefore cannot trigger the
 no-repo worktree fallback for an unpushed create, deletion, content edit,
 frontmatter edit, or glob match.
+
+A claimed non-symlink directory may itself be the repository root. It resolves
+as relative path `""` at the pushed commit; repository-root claims do not take
+the no-repository worktree fallback. A claimed final directory symlink remains
+a lexical symlink unless it is explicitly the container of a glob claim.

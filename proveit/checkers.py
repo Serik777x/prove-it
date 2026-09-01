@@ -224,8 +224,7 @@ def _repo_location(path: Path, *, follow_final_dir: bool = False
     unless the caller explicitly identifies it as a glob container.
     """
     absolute = _lexical_absolute(path)
-    start = (absolute if follow_final_dir and absolute.is_dir()
-             and not absolute.is_symlink()
+    start = (absolute if absolute.is_dir() and not absolute.is_symlink()
              else absolute.parent)
     for candidate in (start, *start.parents):
         if not candidate.is_dir() or candidate.is_symlink():

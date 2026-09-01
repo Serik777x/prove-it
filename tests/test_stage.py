@@ -72,6 +72,58 @@ def commit_only(work, name, body):
     git(work, "commit", "-m", f"add {name}")
 
 
+class TestRepositoryRootResolution:
+    def test_default_stage_root_without_landing_fails_loudly(
+            self, tmp_path, monkeypatch):
+        work = tmp_path / "no-remote-root"
+        _init(work)
+        monkeypatch.chdir(work)
+
+        verdict = run("- type: path_exists\n  path: .\n  kind: dir\n")
+
+        assert not verdict.ok
+        assert verdict.detail["requested_stage"] == "pushed"
+        assert "repo has no commits" in verdict.evidence
+        assert "fell back" not in verdict.evidence
+
+    def test_landed_repository_root_resolves_at_pushed_commit(self, repo):
+        verdict = run("- type: path_exists\n  path: .\n  kind: dir\n")
+
+        assert verdict.ok
+        assert verdict.detail["stage"] == "pushed"
+        assert "at pushed commit" in verdict.evidence
+
+    def test_repository_root_worktree_stage_remains_explicit_escape_hatch(
+            self, tmp_path, monkeypatch):
+        work = tmp_path / "no-remote-root"
+        _init(work)
+        monkeypatch.chdir(work)
+
+        verdict = run("- type: path_exists\n  path: .\n  kind: dir\n"
+                      "  stage: worktree\n")
+
+        assert verdict.ok
+        assert verdict.detail["stage"] == "worktree"
+        assert "in the working tree" in verdict.evidence
+
+    def test_final_directory_symlink_remains_a_lexical_entry(
+            self, repo, tmp_path, monkeypatch):
+        alias = tmp_path / "repo-root-link"
+        try:
+            os.symlink(repo, alias, target_is_directory=True)
+        except (OSError, NotImplementedError) as exc:
+            pytest.skip(f"directory symlinks unavailable on this host: {exc}")
+        monkeypatch.chdir(tmp_path)
+
+        verdict = run(f"- type: path_exists\n  path: {str(alias)!r}\n"
+                      "  kind: dir\n")
+
+        assert not verdict.ok
+        assert verdict.detail["stage"] == "worktree"
+        assert verdict.detail["kind"] == "symlink"
+        assert "fell back from pushed" in verdict.evidence
+
+
 class TestTheLyingReceipt:
     """The regression this whole decision exists for."""
 
