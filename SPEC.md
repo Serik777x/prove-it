@@ -20,20 +20,18 @@ and `id` (the caller's own handle, echoed in output).
 | `path_absent` | `path` | `stage` | a path is NOT present |
 | `path_moved` | `src`, `dst` | `stage` | src is gone and dst is present -- a move, not a copy |
 | `file_contains` | `path`, `text` | `count`, `stage` | a file exists and contains a literal string |
-| `frontmatter_equals` | `path`, `key`, `value` | | a markdown file's YAML frontmatter field equals a value |
-| `glob_count` | `pattern`, `count` | `root` | a glob matches exactly N paths |
+| `frontmatter_equals` | `path`, `key`, `value` | `stage` | a markdown file's YAML frontmatter field equals a value |
+| `glob_count` | `pattern`, `count` | `root`, `stage` | a glob matches exactly N paths |
 
-`frontmatter_equals` and `glob_count` do **not** accept `stage` -- they
-have no checker yet, and a field that is accepted and then ignored is the
-silent pass this grammar exists to prevent. They declare it when they are
-written. A test pins this both ways.
+All six filesystem checkers accept `stage` and resolve through the same
+pushed/worktree boundary. A field that is accepted and then ignored would be
+the silent pass this grammar exists to prevent, so the wiring test pins this.
 
 ## Resolution stage
 
-**DEC-002, status `proposed`.** Stephen has not ratified it. It is
-implemented because M002 cannot be finished around an unmade decision, but
-it is the largest reversible thing in the codebase -- `DEFAULT_STAGE` in
-`proveit/grammar.py` is the single line that flips it.
+**DEC-002, status `locked`.** Stephen ratified it on 2026-08-31 as part of
+the approved prove-it brief. `DEFAULT_STAGE` in `proveit/grammar.py` is the
+single implementation point for the default.
 
 A filesystem claim asks about a path at a `stage`:
 

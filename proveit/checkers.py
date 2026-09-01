@@ -4,11 +4,11 @@ Every checker returns a Verdict carrying EVIDENCE, not a bare boolean.
 "FAIL file_contains README.md" sends someone back to re-run by hand;
 "file exists, 84 lines, text not present" does not.
 
-M002 -- IN PROGRESS. Filesystem checkers are done and now resolve through
-`content_at`; git and process checkers are not written yet. See CHECKERS
-below for what is wired.
+M002 -- COMPLETE. All ten grammar types have evidence-carrying checkers.
+Filesystem checkers resolve through `content_at` or the equivalent glob seam;
+Git and process checkers fail loudly when reality cannot be judged.
 
-RESOLUTION STAGE (DEC-002, status: proposed -- not ratified by Stephen).
+RESOLUTION STAGE (DEC-002, locked by Stephen on 2026-08-31).
 A filesystem claim resolves against PUSHED state by default: the content
 of the path at the newest commit that is an ancestor of the branch's
 remote tracking ref. The working tree is the opt-in stage, never the
@@ -33,15 +33,18 @@ Two degradations, and the difference between them is the whole point:
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path, PurePosixPath
 from dataclasses import dataclass
 from functools import lru_cache
-from pathlib import Path
 from typing import Callable
+
+import yaml
 
 from .grammar import ALLOWED_STAGES, DEFAULT_STAGE, STAGE_PUSHED, STAGE_WORKTREE
 from .parse import Claim
 
 GIT_TIMEOUT = 30
+EVIDENCE_LIMIT = 500
 
 
 @dataclass(frozen=True)
@@ -450,6 +453,246 @@ def check_file_contains(claim: Claim) -> Verdict:
                    f"{res.where}", detail)
 
 
+def _text_at(path: Path, stage: str) -> tuple[Resolution, str | None]:
+    """Read UTF-8 text through the DEC-002 resolution seam."""
+    res = content_at(path, stage, content=True)
+    if res.error or not res.exists or res.kind != "file" or res.content is None:
+        return res, None
+    try:
+        return res, res.content.decode("utf-8")
+    except UnicodeDecodeError:
+        return res, None
+
+
+def check_frontmatter_equals(claim: Claim) -> Verdict:
+    path = Path(claim["path"])
+    key, expected = claim["key"], claim["value"]
+    res, body = _text_at(path, _stage_of(claim))
+    detail = {"path": str(path), "key": key, "expected": expected,
+              **res.as_detail()}
+    if res.error:
+        return _unresolvable(str(path), res)
+    if not res.exists:
+        return Verdict(False, f"{path} does not exist {res.where}", detail)
+    if res.kind != "file":
+        return Verdict(False, f"{path} is a directory, not a file", detail)
+    if body is None:
+        return Verdict(False, f"{path} is not readable UTF-8 text {res.where}",
+                       detail)
+    lines = body.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return Verdict(False, f"{path} has no YAML frontmatter {res.where}",
+                       detail)
+    try:
+        end = next(i for i, line in enumerate(lines[1:], 1)
+                   if line.strip() == "---")
+    except StopIteration:
+        return Verdict(False,
+                       f"{path} has unterminated YAML frontmatter {res.where}",
+                       detail)
+    try:
+        frontmatter = yaml.safe_load("\n".join(lines[1:end]))
+    except yaml.YAMLError as exc:
+        return Verdict(False,
+                       f"{path} has invalid YAML frontmatter {res.where}: {exc}",
+                       detail)
+    if not isinstance(frontmatter, dict):
+        return Verdict(False,
+                       f"{path} frontmatter is not a mapping {res.where}", detail)
+    if key not in frontmatter:
+        return Verdict(False,
+                       f"frontmatter key {key!r} missing in {path} {res.where}",
+                       detail)
+    actual = frontmatter[key]
+    detail["actual"] = actual
+    if actual != expected:
+        return Verdict(False,
+                       f"frontmatter {key!r} is {actual!r}, claimed "
+                       f"{expected!r} in {path} {res.where}", detail)
+    return Verdict(True,
+                   f"frontmatter {key!r} equals {expected!r} in {path} "
+                   f"{res.where}", detail)
+
+
+def _worktree_glob(root: Path, pattern: str, requested: str,
+                   where: str) -> tuple[list[str], str, str | None]:
+    try:
+        matches = sorted(p.relative_to(root).as_posix()
+                         for p in root.glob(pattern))
+    except (OSError, ValueError) as exc:
+        return [], where, str(exc)
+    return matches, where, None
+
+
+def _glob_at(root: Path, pattern: str, stage: str) -> tuple[list[str], str, str,
+                                                            str | None]:
+    """Resolve a glob at pushed or working-tree state."""
+    if stage not in ALLOWED_STAGES:
+        return [], stage, "", f"unknown stage {stage!r}"
+    if stage == STAGE_WORKTREE:
+        matches, where, error = _worktree_glob(
+            root, pattern, stage, "in the working tree")
+        return matches, stage, where, error
+
+    repo = _repo_root(root)
+    if repo is None:
+        where = ("in the working tree (no enclosing git repo -- fell back "
+                 "from pushed)")
+        matches, _, error = _worktree_glob(root, pattern, stage, where)
+        return matches, STAGE_WORKTREE, where, error
+    sha, upstream_or_reason, behind = _landed_commit(repo)
+    if sha is None:
+        return [], stage, "", f"cannot resolve pushed state -- {upstream_or_reason}"
+    try:
+        relative_root = root.resolve().relative_to(repo)
+        prefix = "" if relative_root == Path(".") else relative_root.as_posix()
+    except ValueError:
+        return [], stage, "", f"glob root {root} is outside repo {repo}"
+    code, listing, err = _git_text(
+        repo, "ls-tree", "-r", "-t", "--name-only", sha)
+    if code != 0:
+        return [], stage, "", err or "git could not list pushed tree"
+    matches = []
+    prefix_with_slash = f"{prefix}/" if prefix else ""
+    for item in listing.splitlines():
+        if prefix_with_slash and not item.startswith(prefix_with_slash):
+            continue
+        rel = item[len(prefix_with_slash):]
+        if rel and PurePosixPath(rel).full_match(pattern):
+            matches.append(rel)
+    where = f"at pushed commit {sha[:7]} ({upstream_or_reason}"
+    where += "; this clone is BEHIND it -- run git fetch/pull)" if behind else ")"
+    return sorted(set(matches)), stage, where, None
+
+
+def check_glob_count(claim: Claim) -> Verdict:
+    root = Path(claim.get("root", "."))
+    pattern, expected = claim["pattern"], claim["count"]
+    matches, actual_stage, where, error = _glob_at(
+        root, pattern, _stage_of(claim))
+    detail = {"root": str(root), "pattern": pattern, "count": len(matches),
+              "matches": matches, "requested_stage": _stage_of(claim),
+              "stage": actual_stage}
+    if error:
+        return Verdict(False, f"glob {pattern!r}: {error}", detail)
+    if len(matches) != expected:
+        return Verdict(False,
+                       f"glob {pattern!r} under {root} matched {len(matches)} "
+                       f"paths, claimed {expected} {where}: {matches}", detail)
+    return Verdict(True,
+                   f"glob {pattern!r} under {root} matched {expected} paths "
+                   f"{where}: {matches}", detail)
+
+
+def _clipped(value: str) -> str:
+    value = value.strip()
+    return value if len(value) <= EVIDENCE_LIMIT else value[:EVIDENCE_LIMIT] + "..."
+
+
+def check_command_exits(claim: Claim) -> Verdict:
+    cmd = claim["cmd"]
+    expected = claim.get("code", 0)
+    cwd = Path(claim.get("cwd", "."))
+    timeout = claim.get("timeout", 60)
+    detail = {"cmd": cmd, "cwd": str(cwd), "expected_code": expected}
+    try:
+        proc = subprocess.run(cmd, cwd=cwd, shell=True, capture_output=True,
+                              text=True, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        detail["timeout"] = timeout
+        return Verdict(False, f"command timed out after {timeout}s: {cmd}", detail)
+    except OSError as exc:
+        return Verdict(False, f"command could not run in {cwd}: {exc}", detail)
+    detail.update({"actual_code": proc.returncode,
+                   "stdout": _clipped(proc.stdout),
+                   "stderr": _clipped(proc.stderr)})
+    evidence = f"command exited {proc.returncode}, claimed {expected}: {cmd}"
+    if proc.stdout.strip():
+        evidence += f"; stdout={_clipped(proc.stdout)!r}"
+    if proc.stderr.strip():
+        evidence += f"; stderr={_clipped(proc.stderr)!r}"
+    return Verdict(proc.returncode == expected, evidence, detail)
+
+
+def _repo_or_failure(path: str) -> tuple[Path | None, Verdict | None]:
+    repo = Path(path)
+    code, root, err = _git_text(repo, "rev-parse", "--show-toplevel")
+    if code != 0 or not root:
+        return None, Verdict(False, f"{repo} is not a git repository: {err}",
+                             {"repo": str(repo)})
+    return Path(root), None
+
+
+def check_git_head_is(claim: Claim) -> Verdict:
+    root, failure = _repo_or_failure(claim["repo"])
+    if failure:
+        return failure
+    assert root is not None
+    code, head, err = _git_text(root, "rev-parse", "HEAD")
+    if code != 0:
+        return Verdict(False, f"cannot resolve HEAD in {root}: {err}")
+    code, expected, err = _git_text(root, "rev-parse", f"{claim['sha']}^{{commit}}")
+    detail = {"repo": str(root), "head": head, "claimed": claim["sha"]}
+    if code != 0:
+        return Verdict(False, f"claimed commit {claim['sha']!r} does not resolve: {err}",
+                       detail)
+    detail["expected"] = expected
+    return Verdict(head == expected,
+                   f"HEAD is {head}, claimed {expected} in {root}", detail)
+
+
+def check_git_clean(claim: Claim) -> Verdict:
+    root, failure = _repo_or_failure(claim["repo"])
+    if failure:
+        return failure
+    assert root is not None
+    include_untracked = claim.get("untracked", False)
+    flag = "--untracked-files=all" if include_untracked else "--untracked-files=no"
+    code, output, err = _git_text(root, "status", "--porcelain", flag)
+    if code != 0:
+        return Verdict(False, f"git status failed in {root}: {err}")
+    changes = output.splitlines() if output else []
+    detail = {"repo": str(root), "untracked": include_untracked,
+              "changes": changes}
+    if changes:
+        return Verdict(False, f"repo is dirty ({len(changes)} changes): {changes}",
+                       detail)
+    scope = "tracked and untracked files" if include_untracked else "tracked files"
+    return Verdict(True, f"repo is clean for {scope}: {root}", detail)
+
+
+def check_git_pushed(claim: Claim) -> Verdict:
+    root, failure = _repo_or_failure(claim["repo"])
+    if failure:
+        return failure
+    assert root is not None
+    remote, named_ref = claim.get("remote", "origin"), claim.get("ref")
+    if named_ref:
+        target = named_ref if named_ref.startswith("refs/") else f"{remote}/{named_ref}"
+    else:
+        code, target, err = _git_text(
+            root, "rev-parse", "--abbrev-ref", "--symbolic-full-name",
+            "@{upstream}")
+        if code != 0 or not target:
+            return Verdict(False, f"HEAD has no upstream tracking ref in {root}: {err}",
+                           {"repo": str(root), "remote": remote})
+    code, target_sha, err = _git_text(root, "rev-parse", "--verify", target)
+    if code != 0:
+        return Verdict(False, f"remote ref {target!r} does not resolve: {err}",
+                       {"repo": str(root), "ref": target})
+    _, head, _ = _git_text(root, "rev-parse", "HEAD")
+    code, _, err = _git_text(root, "merge-base", "--is-ancestor", "HEAD", target)
+    detail = {"repo": str(root), "head": head, "ref": target,
+              "ref_sha": target_sha}
+    if code == 0:
+        return Verdict(True, f"HEAD {head[:12]} is pushed to {target} "
+                       f"({target_sha[:12]})", detail)
+    if code == 1:
+        return Verdict(False, f"HEAD {head[:12]} has not landed on {target} "
+                       f"({target_sha[:12]})", detail)
+    return Verdict(False, f"could not compare HEAD with {target}: {err}", detail)
+
+
 # Wired checkers, by claim type. A type in the grammar with no entry here
 # is NOT silently skipped -- the runner (M003) treats a missing checker as
 # a hard error, same as an unknown type.
@@ -458,9 +701,10 @@ CHECKERS: dict[str, Callable[[Claim], Verdict]] = {
     "path_absent": check_path_absent,
     "path_moved": check_path_moved,
     "file_contains": check_file_contains,
+    "frontmatter_equals": check_frontmatter_equals,
+    "glob_count": check_glob_count,
+    "command_exits": check_command_exits,
+    "git_head_is": check_git_head_is,
+    "git_clean": check_git_clean,
+    "git_pushed": check_git_pushed,
 }
-
-# NOT YET IMPLEMENTED -- frontmatter_equals, glob_count, command_exits,
-# git_head_is, git_clean, git_pushed. The two fs types among them must
-# declare `stage` in the grammar AND resolve through content_at when they
-# are written; see grammar.STAGED_TYPES.

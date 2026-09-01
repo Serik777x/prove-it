@@ -41,7 +41,7 @@ because the file really is on disk with really the right bytes.
 Outside a git repo the claim falls back to the working tree and says so.
 Inside a repo with nothing to compare against -- no remote, no upstream,
 no commits -- it refuses to answer rather than pass. `SPEC.md` has the
-full rules; the call itself is DEC-002, still `proposed`.
+full rules; the call itself is DEC-002, locked 2026-08-31.
 
 ## Why
 
@@ -53,11 +53,10 @@ vault-house `20_projects/20.71-prove-it/` for purpose and decisions.
 
 ## Status
 
-Early. M001 (grammar + parser) is complete and tested. M002 (checkers) is
-in progress: the four filesystem checkers are written and now resolve
-through the DEC-002 pushed-state layer; `frontmatter_equals`, `glob_count`,
-`command_exits`, `git_head_is`, `git_clean` and `git_pushed` are not
-written. See the project state file for exact position.
+Early. M001 (grammar + parser) and M002 (all ten checkers) are complete and
+tested. All six filesystem checkers resolve through the DEC-002 pushed-state
+layer; the process and Git checkers return evidence rather than booleans.
+M003 is the runner and CLI.
 
 ## Develop
 

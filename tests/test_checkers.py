@@ -105,7 +105,7 @@ class TestFileContains:
 class TestWiring:
     def test_every_wired_checker_is_a_known_claim_type(self):
         from proveit.grammar import CLAIM_TYPES
-        assert set(CHECKERS) <= set(CLAIM_TYPES)
+        assert set(CHECKERS) == set(CLAIM_TYPES)
 
     def test_verdict_status_string(self, repo):
         (repo / "a").write_text("x")

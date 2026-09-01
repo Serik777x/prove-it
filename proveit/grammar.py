@@ -28,10 +28,8 @@ STAGE_WORKTREE = "worktree"
 DEFAULT_STAGE = STAGE_PUSHED
 ALLOWED_STAGES: tuple[str, ...] = (STAGE_PUSHED, STAGE_WORKTREE)
 
-# Carried by every fs claim type that HAS a checker honouring it. A type
-# whose checker cannot yet resolve a stage must NOT declare the field --
-# an accepted-then-ignored field is the silent pass this grammar exists
-# to prevent. frontmatter_equals and glob_count add it when written.
+# Carried by every filesystem claim type. Every checker honours it through
+# the shared pushed/worktree resolution layer.
 _STAGED: dict[str, tuple] = {"stage": (str, DEFAULT_STAGE)}
 
 
@@ -86,12 +84,13 @@ _ALL = [
 
     _t("frontmatter_equals", "fs",
        "a markdown file's YAML frontmatter field equals a value",
-       {"path": str, "key": str, "value": object}),
+       {"path": str, "key": str, "value": object},
+       dict(_STAGED)),
 
     _t("glob_count", "fs",
        "a glob matches exactly N paths",
        {"pattern": str, "count": int},
-       {"root": (str, ".")}),
+       {"root": (str, "."), **_STAGED}),
 
     _t("command_exits", "proc",
        "a command runs and exits with the expected code",

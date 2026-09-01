@@ -287,10 +287,12 @@ class TestGrammarAgreement:
         wired_fs = {n for n in CHECKERS if CLAIM_TYPES[n].domain == "fs"}
         assert wired_fs == set(STAGED_TYPES)
 
-    def test_worktree_stage_is_rejected_on_types_that_cannot_honour_it(self):
-        """frontmatter_equals has no checker yet, so it must NOT accept
-        `stage` -- an accepted-then-ignored field is the silent pass."""
-        _, errors = parse_claims(
+    def test_frontmatter_stage_is_accepted_now_that_checker_honours_it(self):
+        """Every filesystem checker now honours the declared stage."""
+        claims, errors = parse_claims(
             "- type: frontmatter_equals\n  path: a.md\n  key: k\n"
             "  value: v\n  stage: worktree\n")
-        assert any("unknown field 'stage'" in e.message for e in errors)
+        assert errors == []
+        assert claims[0]["stage"] == "worktree"
+        assert "frontmatter_equals" in STAGED_TYPES
+        assert "glob_count" in STAGED_TYPES
