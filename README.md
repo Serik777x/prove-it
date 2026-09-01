@@ -10,7 +10,7 @@ statements against actual disk and git.
 # claims.yaml
 - type: file_contains
   path: proveit/checkers.py
-  text: "def check_git_pushed"
+  text: "def check_pushed_state"
 - type: git_pushed
   repo: .
   note: the write receipt said ok -- did it actually land?

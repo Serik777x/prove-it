@@ -6,8 +6,17 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def installed_console():
+    executable = Path(sys.executable).with_name(
+        "prove-it.exe" if os.name == "nt" else "prove-it")
+    assert executable.is_file(), f"console entry point is not installed: {executable}"
+    return executable
 
 
 def invoke(tmp_path, body, *extra):
@@ -35,11 +44,8 @@ def test_e2_missing_required_field_is_exit_2(tmp_path):
 
 
 def test_stable_e3_false_claim_is_exit_1_through_installed_console():
-    executable = Path(sys.executable).with_name(
-        "prove-it.exe" if os.name == "nt" else "prove-it")
-    assert executable.is_file(), f"console entry point is not installed: {executable}"
     proc = subprocess.run(
-        [str(executable), "verify", "examples/e3-false-claim.yaml"],
+        [str(installed_console()), "verify", "examples/e3-false-claim.yaml"],
         cwd=PROJECT_ROOT, capture_output=True, text=True,
     )
     assert proc.returncode == 1
@@ -47,6 +53,48 @@ def test_stable_e3_false_claim_is_exit_1_through_installed_console():
     assert "PROVE_IT_E3_SENTINEL_MUST_STAY_ABSENT" in proc.stdout
     assert "file exists, 1 line, text not present" in proc.stdout
     assert "in the working tree" in proc.stdout
+
+
+def test_approved_e3_literal_is_exit_1_through_installed_console(tmp_path):
+    claims = tmp_path / "claims.yaml"
+    claims.write_text(
+        "- type: file_contains\n"
+        f"  path: {(PROJECT_ROOT / 'proveit' / 'checkers.py').as_posix()}\n"
+        "  text: def check_git_pushed\n",
+        encoding="utf-8",
+    )
+    proc = subprocess.run(
+        [str(installed_console()), "verify", str(claims)],
+        cwd=PROJECT_ROOT, capture_output=True, text=True,
+    )
+    assert proc.returncode == 1
+    assert "FAIL file_contains" in proc.stdout
+    assert "def check_git_pushed" in proc.stdout
+    assert "text not present" in proc.stdout
+
+
+@pytest.mark.parametrize("json_mode", [False, True])
+def test_non_utf8_command_output_still_emits_a_verdict(tmp_path, json_mode):
+    cmd = (f'"{sys.executable}" -c '
+           '"import sys; sys.stdout.buffer.write(bytes([255]))"')
+    claims = tmp_path / "claims.yaml"
+    claims.write_text(
+        "- type: command_exits\n"
+        f"  cmd: {cmd!r}\n  cwd: {str(tmp_path)!r}\n",
+        encoding="utf-8",
+    )
+    args = [str(installed_console()), "verify", str(claims)]
+    if json_mode:
+        args.append("--json")
+    proc = subprocess.run(args, capture_output=True, text=True)
+    assert proc.returncode == 0
+    if json_mode:
+        payload = json.loads(proc.stdout)
+        assert payload["claims"][0]["status"] == "PASS"
+        assert "�" in payload["claims"][0]["evidence"]
+    else:
+        assert "PASS command_exits" in proc.stdout
+        assert "�" in proc.stdout
 
 
 def test_e4_true_claim_is_exit_0_with_evidence(tmp_path):

@@ -676,7 +676,7 @@ def check_git_clean(claim: Claim) -> Verdict:
     return Verdict(True, f"repo is clean for {scope}: {root}", detail)
 
 
-def check_git_pushed(claim: Claim) -> Verdict:
+def check_pushed_state(claim: Claim) -> Verdict:
     root, failure = _repo_or_failure(claim["repo"])
     if failure:
         return failure
@@ -749,5 +749,5 @@ CHECKERS: dict[str, Callable[[Claim], Verdict]] = {
     "command_exits": check_command_exits,
     "git_head_is": check_git_head_is,
     "git_clean": check_git_clean,
-    "git_pushed": check_git_pushed,
+    "git_pushed": check_pushed_state,
 }
