@@ -32,6 +32,7 @@ Two degradations, and the difference between them is the whole point:
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -120,7 +121,7 @@ def _git(cwd, *args) -> tuple[int, bytes, str]:
     try:
         proc = subprocess.run(["git", "-C", str(cwd), *args],
                               capture_output=True, timeout=GIT_TIMEOUT)
-    except (OSError, subprocess.SubprocessError) as exc:
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
         return 1, b"", f"git could not be run: {exc}"
     return (proc.returncode, proc.stdout,
             proc.stderr.decode("utf-8", "replace").strip())
@@ -161,6 +162,11 @@ def _repo_root(path: Path) -> Path | None:
         return None
     root = _repo_root_of_dir(str(start.resolve()))
     return Path(root) if root else None
+
+
+def _lexical_absolute(path: Path) -> Path:
+    """Absolute path without following the final path or parent symlinks."""
+    return Path(os.path.abspath(path))
 
 
 def _why_nothing_landed(root: Path) -> str:
@@ -303,7 +309,7 @@ def content_at(path, stage: str = DEFAULT_STAGE, *,
                    f"purpose."))
 
     try:
-        rel = p.resolve().relative_to(root).as_posix()
+        rel = _lexical_absolute(p).relative_to(root).as_posix()
     except ValueError:
         return _resolve_worktree(
             p, stage,
@@ -549,7 +555,7 @@ def _glob_at(root: Path, pattern: str, stage: str) -> tuple[list[str], str, str,
     if sha is None:
         return [], stage, "", f"cannot resolve pushed state -- {upstream_or_reason}"
     try:
-        relative_root = root.resolve().relative_to(repo)
+        relative_root = _lexical_absolute(root).relative_to(repo)
         prefix = "" if relative_root == Path(".") else relative_root.as_posix()
     except ValueError:
         return [], stage, "", f"glob root {root} is outside repo {repo}"

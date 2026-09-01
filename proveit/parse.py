@@ -71,6 +71,10 @@ def _validate_one(index: int, raw: Any) -> tuple[Claim | None, list[ParseError]]
             index)]
 
     name = raw["type"]
+    if not isinstance(name, str):
+        return None, [ParseError(
+            f"claim field 'type' must be string, got {type(name).__name__}",
+            index)]
     spec = CLAIM_TYPES.get(name)
     if spec is None:
         return None, [ParseError(
@@ -104,6 +108,9 @@ def _validate_one(index: int, raw: Any) -> tuple[Claim | None, list[ParseError]]
         elif key in spec.required and expected is str and not value.strip():
             errors.append(ParseError(
                 f"{name} field {key!r} must be a non-empty string", index))
+        elif isinstance(value, str) and "\0" in value:
+            errors.append(ParseError(
+                f"{name} field {key!r} must not contain NUL", index))
 
     if errors:
         return None, errors

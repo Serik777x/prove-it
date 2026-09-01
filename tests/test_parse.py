@@ -61,6 +61,14 @@ class TestClosedVocabulary:
     def test_missing_type_is_an_error(self):
         assert any("missing 'type'" in m for m in errs("- path: README.md\n"))
 
+    @pytest.mark.parametrize("value,kind", [
+        ("[path_exists]", "list"),
+        ("{name: path_exists}", "dict"),
+    ])
+    def test_non_string_type_is_a_parse_error(self, value, kind):
+        messages = errs(f"- type: {value}\n  path: x\n")
+        assert messages == [f"claim field 'type' must be string, got {kind}"]
+
     def test_unknown_field_is_an_error(self):
         # the whole point: a typo'd field must not silently pass
         messages = errs("- type: path_exists\n  paht: README.md\n")
@@ -115,6 +123,15 @@ class TestFieldTypes:
             "  value: 3\n")
         assert errors == []
         assert claims[0]["value"] == 3
+
+    @pytest.mark.parametrize("claim_type", [
+        "git_head_is", "git_clean", "git_pushed"])
+    def test_nul_in_git_repo_is_a_parse_error(self, claim_type):
+        extra = "  sha: deadbeef\n" if claim_type == "git_head_is" else ""
+        messages = errs(
+            f"- type: {claim_type}\n  repo: \"\\0\"\n{extra}")
+        assert any("field 'repo' must not contain NUL" in message
+                   for message in messages)
 
 
 class TestDefaults:

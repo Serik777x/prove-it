@@ -12,6 +12,7 @@ there with exactly the claimed bytes. It must FAIL here.
 """
 
 import subprocess
+import os
 
 import pytest
 
@@ -178,6 +179,77 @@ class TestOtherCheckersHonourTheStage:
 
         v = run("- type: path_exists\n  path: pkg\n  kind: dir\n")
         assert v.ok and "directory, 1 entries" in v.evidence
+
+
+class TestPushedSymlinksAreLexical:
+    @pytest.fixture
+    def untracked_link(self, repo):
+        link = repo / "untracked-link.md"
+        try:
+            os.symlink("landed.txt", link)
+        except (OSError, NotImplementedError) as exc:
+            pytest.skip(f"symlinks unavailable on this host: {exc}")
+        return link
+
+    def test_untracked_link_cannot_satisfy_path_exists(self, untracked_link):
+        verdict = run("- type: path_exists\n  path: untracked-link.md\n")
+        assert not verdict.ok
+        assert "NOT at that commit" in verdict.evidence
+
+    def test_untracked_link_is_absent_at_pushed_state(self, untracked_link):
+        assert run("- type: path_absent\n  path: untracked-link.md\n").ok
+
+    def test_untracked_link_cannot_be_the_destination_of_a_move(
+            self, untracked_link):
+        verdict = run("- type: path_moved\n  src: old.md\n"
+                      "  dst: untracked-link.md\n")
+        assert not verdict.ok and "deletion, not a move" in verdict.evidence
+
+    def test_untracked_link_cannot_supply_file_content(self, untracked_link):
+        verdict = run("- type: file_contains\n  path: untracked-link.md\n"
+                      "  text: landed content\n")
+        assert not verdict.ok and "NOT at that commit" in verdict.evidence
+
+    def test_untracked_link_cannot_supply_frontmatter(self, repo):
+        target = repo / "frontmatter.md"
+        target.write_text("---\nstatus: landed\n---\n", encoding="utf-8")
+        git(repo, "add", "frontmatter.md")
+        git(repo, "commit", "-m", "frontmatter")
+        git(repo, "push")
+        link = repo / "untracked-frontmatter.md"
+        try:
+            os.symlink("frontmatter.md", link)
+        except (OSError, NotImplementedError) as exc:
+            pytest.skip(f"symlinks unavailable on this host: {exc}")
+        verdict = run("- type: frontmatter_equals\n"
+                      "  path: untracked-frontmatter.md\n"
+                      "  key: status\n  value: landed\n")
+        assert not verdict.ok and "does not exist at pushed commit" in verdict.evidence
+
+    def test_pushed_glob_ignores_untracked_link(self, untracked_link):
+        verdict = run("- type: glob_count\n"
+                      "  pattern: 'untracked-link*'\n  count: 0\n")
+        assert verdict.ok, verdict.evidence
+
+    def test_changed_tracked_link_reads_the_pushed_link_blob(self, repo):
+        (repo / "other.txt").write_text("other\n", encoding="utf-8")
+        link = repo / "tracked-link.txt"
+        try:
+            os.symlink("landed.txt", link)
+        except (OSError, NotImplementedError) as exc:
+            pytest.skip(f"symlinks unavailable on this host: {exc}")
+        git(repo, "add", "other.txt", "tracked-link.txt")
+        git(repo, "commit", "-m", "tracked symlink")
+        git(repo, "push")
+        link.unlink()
+        os.symlink("other.txt", link)
+
+        landed = run("- type: file_contains\n  path: tracked-link.txt\n"
+                     "  text: landed.txt\n")
+        changed = run("- type: file_contains\n  path: tracked-link.txt\n"
+                      "  text: other.txt\n")
+        assert landed.ok, landed.evidence
+        assert not changed.ok, changed.evidence
 
 
 class TestBehindClone:
