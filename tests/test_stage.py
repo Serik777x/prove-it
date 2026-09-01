@@ -386,6 +386,69 @@ class TestPushedSymlinksAreLexical:
         assert verdict.detail["dst_resolution"]["stage"] == "worktree"
 
 
+class TestRepositoryDirectoryAliases:
+    @pytest.fixture
+    def alias(self, repo, tmp_path):
+        link = tmp_path / "repo-alias"
+        try:
+            os.symlink(repo, link, target_is_directory=True)
+        except (OSError, NotImplementedError) as exc:
+            pytest.skip(f"directory aliases unavailable on this host: {exc}")
+        return link
+
+    def test_unpushed_create_cannot_pass_through_alias(self, repo, alias):
+        (repo / "ghost.md").write_text(
+            "unpublished marker\n", encoding="utf-8")
+        path = alias / "ghost.md"
+
+        exists = run("- type: path_exists\n"
+                     f"  path: {str(path)!r}\n")
+        contains = run("- type: file_contains\n"
+                       f"  path: {str(path)!r}\n"
+                       "  text: unpublished marker\n")
+
+        assert not exists.ok and exists.detail["stage"] == "pushed"
+        assert not contains.ok and contains.detail["stage"] == "pushed"
+        assert "fell back" not in contains.evidence
+
+    def test_unpushed_deletion_cannot_pass_through_alias(self, repo, alias):
+        (repo / "landed.txt").unlink()
+
+        verdict = run("- type: path_absent\n"
+                      f"  path: {str(alias / 'landed.txt')!r}\n")
+
+        assert not verdict.ok
+        assert verdict.detail["stage"] == "pushed"
+        assert "still present" in verdict.evidence
+
+    def test_unpushed_frontmatter_edit_cannot_pass_through_alias(
+            self, repo, alias):
+        note = repo / "note.md"
+        note.write_text("---\nstatus: landed\n---\n", encoding="utf-8")
+        git(repo, "add", "note.md")
+        git(repo, "commit", "-m", "land frontmatter")
+        git(repo, "push")
+        note.write_text("---\nstatus: unpublished\n---\n", encoding="utf-8")
+
+        verdict = run("- type: frontmatter_equals\n"
+                      f"  path: {str(alias / 'note.md')!r}\n"
+                      "  key: status\n  value: unpublished\n")
+
+        assert not verdict.ok
+        assert verdict.detail["stage"] == "pushed"
+
+    def test_unpushed_glob_match_cannot_pass_through_alias(self, repo, alias):
+        (repo / "ghost.md").write_text("x\n", encoding="utf-8")
+
+        verdict = run("- type: glob_count\n"
+                      f"  root: {str(alias)!r}\n"
+                      "  pattern: 'ghost*'\n  count: 1\n")
+
+        assert not verdict.ok
+        assert verdict.detail["stage"] == "pushed"
+        assert "fell back" not in verdict.evidence
+
+
 class TestBehindClone:
     """merge-base semantics, pinned deliberately.
 

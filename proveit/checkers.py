@@ -192,9 +192,25 @@ def _repo_root_of_dir(directory: str) -> str | None:
     return out if code == 0 and out else None
 
 
-def _repo_root(path: Path) -> Path | None:
+@dataclass(frozen=True)
+class _RepoLocation:
+    root: Path
+    rel: str
+
+
+def _repo_location(path: Path, *, follow_final_dir: bool = False
+                   ) -> _RepoLocation | None:
+    """Map a lexical path to one repository and a repo-relative path.
+
+    A lexical ancestor already inside a repository wins; this prevents an
+    intermediate symlink inside that repository from escaping the pushed
+    tree. Only when no lexical repository exists do we resolve a directory
+    alias that points *into* a repository. The final entry remains lexical
+    unless the caller explicitly identifies it as a glob container.
+    """
     absolute = _lexical_absolute(path)
-    start = (absolute if absolute.is_dir() and not absolute.is_symlink()
+    start = (absolute if follow_final_dir and absolute.is_dir()
+             and not absolute.is_symlink()
              else absolute.parent)
     for candidate in (start, *start.parents):
         if not candidate.is_dir() or candidate.is_symlink():
@@ -204,11 +220,38 @@ def _repo_root(path: Path) -> Path | None:
             continue
         root_path = Path(root)
         try:
-            absolute.relative_to(root_path)
+            rel = absolute.relative_to(root_path).as_posix()
+            rel = "" if rel == "." else rel
         except ValueError:
             continue
-        return root_path
+        return _RepoLocation(root_path, rel)
+
+    target = absolute if follow_final_dir else absolute.parent
+    for candidate in (target, *target.parents):
+        if not candidate.is_dir():
+            continue
+        try:
+            suffix = target.relative_to(candidate)
+            physical = candidate.resolve(strict=True).joinpath(*suffix.parts)
+            mapped = physical if follow_final_dir else physical / absolute.name
+        except (OSError, RuntimeError, ValueError):
+            continue
+        root = _repo_root_of_dir(str(physical))
+        if not root:
+            continue
+        try:
+            root_path = Path(root).resolve(strict=True)
+            rel = mapped.relative_to(root_path).as_posix()
+            rel = "" if rel == "." else rel
+        except (OSError, RuntimeError, ValueError):
+            continue
+        return _RepoLocation(root_path, rel)
     return None
+
+
+def _repo_root(path: Path) -> Path | None:
+    location = _repo_location(path)
+    return location.root if location else None
 
 
 def _lexical_absolute(path: Path) -> Path:
@@ -390,13 +433,14 @@ def content_at(path, stage: str = DEFAULT_STAGE, *,
     if stage == STAGE_WORKTREE:
         return _resolve_worktree(p, stage, "in the working tree", content)
 
-    root = _repo_root(p)
-    if root is None:
+    location = _repo_location(p)
+    if location is None:
         return _resolve_worktree(
             p, stage,
             "in the working tree (no enclosing git repo -- fell back from "
             "pushed)", content)
 
+    root = location.root
     sha, upstream_or_reason, behind = _landed_commit(root)
     if sha is None:
         return Resolution(
@@ -406,15 +450,8 @@ def content_at(path, stage: str = DEFAULT_STAGE, *,
                    f"add `stage: worktree` to ask the weaker question on "
                    f"purpose."))
 
-    try:
-        rel = _lexical_absolute(p).relative_to(root).as_posix()
-    except ValueError:
-        return _resolve_worktree(
-            p, stage,
-            f"in the working tree (outside {root} -- fell back from pushed)",
-            content)
-
-    return _resolve_pushed(root, sha, upstream_or_reason, rel, content, behind)
+    return _resolve_pushed(root, sha, upstream_or_reason, location.rel,
+                           content, behind)
 
 
 # --------------------------------------------------------------------------
@@ -543,8 +580,10 @@ def check_path_moved(claim: Claim) -> Verdict:
     if dst_res.error:
         return _unresolvable(str(dst), dst_res)
 
-    src_root = _repo_root(src)
-    dst_root = _repo_root(dst)
+    src_location = _repo_location(src)
+    dst_location = _repo_location(dst)
+    src_root = src_location.root if src_location else None
+    dst_root = dst_location.root if dst_location else None
     same_observation = (src_res.stage == dst_res.stage
                         and src_res.where == dst_res.where
                         and src_root == dst_root)
@@ -589,13 +628,11 @@ def check_path_moved(claim: Claim) -> Verdict:
             detail,
         )
 
-    try:
-        src_rel = _lexical_absolute(src).relative_to(src_root).as_posix()
-        dst_rel = _lexical_absolute(dst).relative_to(src_root).as_posix()
-    except ValueError:
+    if src_location is None or dst_location is None:
         detail["move_provenance"] = None
         return Verdict(False, f"cannot express both move endpoints inside "
                        f"repository {src_root}", detail)
+    src_rel, dst_rel = src_location.rel, dst_location.rel
 
     if src_res.stage == STAGE_PUSHED:
         revision = src_res.revision
@@ -752,20 +789,17 @@ def _glob_at(root: Path, pattern: str, stage: str) -> tuple[list[str], str, str,
             root, pattern, stage, "in the working tree")
         return matches, stage, where, error
 
-    repo = _repo_root(root)
-    if repo is None:
+    location = _repo_location(root, follow_final_dir=True)
+    if location is None:
         where = ("in the working tree (no enclosing git repo -- fell back "
                  "from pushed)")
         matches, _, error = _worktree_glob(root, pattern, stage, where)
         return matches, STAGE_WORKTREE, where, error
+    repo = location.root
     sha, upstream_or_reason, behind = _landed_commit(repo)
     if sha is None:
         return [], stage, "", f"cannot resolve pushed state -- {upstream_or_reason}"
-    try:
-        relative_root = _lexical_absolute(root).relative_to(repo)
-        prefix = "" if relative_root == Path(".") else relative_root.as_posix()
-    except ValueError:
-        return [], stage, "", f"glob root {root} is outside repo {repo}"
+    prefix = location.rel
     code, listing, err = _git_text(
         repo, "ls-tree", "-r", "-t", "--name-only", sha)
     if code != 0:

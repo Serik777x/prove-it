@@ -169,3 +169,11 @@ satisfy `path_absent` merely because that target is missing.
 Pushed resolution reads Git tree mode `120000` the same way, so a committed
 symlink cannot satisfy a false `kind: file` claim merely because Git stores
 its target text in a blob.
+
+Repository discovery is alias-aware without following the claimed final
+entry. A lexical path already under a repository stays inside that repository
+even if an intermediate symlink points out; when no lexical repository exists,
+a directory symlink or junction pointing into one is mapped back to its
+physical repository-relative path. An alias therefore cannot trigger the
+no-repo worktree fallback for an unpushed create, deletion, content edit,
+frontmatter edit, or glob match.
