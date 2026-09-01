@@ -157,6 +157,10 @@ though the grammar/checker equality test should make it unreachable.
 claim is supposed to be trivially checkable by a human reading it; a
 regex is a second thing to get wrong.
 
+`file_contains` requires a regular file. A symlink's stored target name is
+path metadata, not file content, so pushed and worktree symlinks fail with
+evidence naming the link and target.
+
 `count` on `file_contains` is an exact occurrence count when present.
 Omitted means "at least one".
 
@@ -168,6 +172,10 @@ and recreating the destination breaks that lineage even when an older genuine
 rename exists. Worktree claims accept a matching uncommitted Git rename or the
 same lineage proof at HEAD. Outside one repository, endpoint state cannot
 prove the transition, so the checker fails loudly instead of guessing.
+
+Worktree absence and glob counts distinguish a missing entry from an
+inspection failure. Permission and enumeration errors are unresolvable failed
+verdicts; they can never satisfy `path_absent` or a zero-count glob.
 
 Worktree existence is lexical: a dangling symlink is still a present
 directory entry. It is reported as a symlink with its target and can never

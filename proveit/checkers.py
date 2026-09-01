@@ -36,6 +36,7 @@ import os
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -342,28 +343,28 @@ def _resolve_worktree(path: Path, requested: str, where: str,
         return Resolution(requested=requested, stage=STAGE_WORKTREE,
                           where=where, **kw)
 
-    if not os.path.lexists(path):
+    try:
+        entry_stat = path.lstat()
+    except FileNotFoundError:
         return make(exists=False)
-    if path.is_symlink():
+    except OSError as exc:
+        return make(exists=False, error=f"cannot inspect path: {exc}")
+    if stat.S_ISLNK(entry_stat.st_mode):
         try:
             target = os.readlink(path)
-            size = path.lstat().st_size
         except OSError as exc:
             return make(exists=True, kind="symlink",
                         read_error=exc.strerror or str(exc))
         content = target.encode("utf-8") if want_content else None
-        return make(exists=True, kind="symlink", size=size,
+        return make(exists=True, kind="symlink", size=entry_stat.st_size,
                     link_target=target, content=content)
-    if path.is_dir():
+    if stat.S_ISDIR(entry_stat.st_mode):
         try:
             entries = sum(1 for _ in path.iterdir())
         except OSError:
             entries = None
         return make(exists=True, kind="dir", entries=entries)
-    try:
-        size = path.stat().st_size
-    except OSError as exc:
-        return make(exists=True, read_error=exc.strerror or str(exc))
+    size = entry_stat.st_size
 
     content = None
     if want_content:
@@ -720,8 +721,10 @@ def check_file_contains(claim: Claim) -> Verdict:
         return Verdict(False,
                        f"{path} does not exist {res.where} -- "
                        f"{_missing_hint(path, res)}", detail)
-    if res.kind == "dir":
-        return Verdict(False, f"{path} is a directory, not a file", detail)
+    if res.kind != "file":
+        observed = ("a directory" if res.kind == "dir" else res.describe())
+        return Verdict(False, f"{path} is {observed}, not a regular file "
+                       f"{res.where}", detail)
     if res.content is None:
         return Verdict(False,
                        f"{path} could not be read as UTF-8 text: "
@@ -821,11 +824,30 @@ def _worktree_glob(root: Path, pattern: str, requested: str,
             or PureWindowsPath(pattern).is_absolute()):
         return [], where, f"glob pattern must be relative, got {pattern!r}"
     try:
-        matches = sorted(p.relative_to(root).as_posix()
-                         for p in root.glob(pattern))
+        root_stat = root.stat()
+    except FileNotFoundError:
+        return [], where, None
+    except OSError as exc:
+        return [], where, f"cannot inspect glob root: {exc}"
+    if not stat.S_ISDIR(root_stat.st_mode):
+        return [], where, f"glob root is not a directory: {root}"
+
+    matches: list[str] = []
+
+    def walk(directory: Path, prefix: PurePosixPath) -> None:
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                rel = prefix / entry.name
+                if rel.full_match(pattern):
+                    matches.append(rel.as_posix())
+                if entry.is_dir(follow_symlinks=False):
+                    walk(Path(entry.path), rel)
+
+    try:
+        walk(root, PurePosixPath())
     except (OSError, ValueError, NotImplementedError) as exc:
-        return [], where, str(exc)
-    return matches, where, None
+        return [], where, f"cannot enumerate glob root: {exc}"
+    return sorted(matches), where, None
 
 
 def _glob_at(root: Path, pattern: str, stage: str) -> tuple[list[str], str, str,

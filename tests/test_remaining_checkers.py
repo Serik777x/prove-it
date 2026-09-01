@@ -109,6 +109,25 @@ class TestGlobCount:
         assert not verdict.ok
         assert "must be relative" in verdict.evidence
 
+    def test_enumeration_error_is_not_proven_zero(
+            self, landed_repo, monkeypatch):
+        locked = landed_repo / "locked"
+        locked.mkdir()
+        (locked / "present.md").write_text("present\n", encoding="utf-8")
+        original = os.scandir
+
+        def deny(path):
+            if os.path.abspath(path) == str(locked):
+                raise PermissionError("enumeration denied")
+            return original(path)
+
+        monkeypatch.setattr(os, "scandir", deny)
+        verdict = run("- type: glob_count\n  root: locked\n"
+                      "  pattern: '*'\n  count: 0\n  stage: worktree\n")
+
+        assert not verdict.ok
+        assert "cannot enumerate glob root" in verdict.evidence
+
 
 class TestCommandExits:
     def test_expected_nonzero_exit_passes_with_evidence(self, tmp_path):

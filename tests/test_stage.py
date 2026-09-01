@@ -330,8 +330,14 @@ class TestPushedSymlinksAreLexical:
                      "  text: landed.txt\n")
         changed = run("- type: file_contains\n  path: tracked-link.txt\n"
                       "  text: other.txt\n")
-        assert landed.ok, landed.evidence
-        assert not changed.ok, changed.evidence
+        worktree_target = run(
+            "- type: file_contains\n  path: tracked-link.txt\n"
+            "  text: other.txt\n  stage: worktree\n")
+        assert not landed.ok and "not a regular file" in landed.evidence
+        assert "symlink -> 'landed.txt'" in landed.evidence
+        assert not changed.ok and "symlink -> 'landed.txt'" in changed.evidence
+        assert not worktree_target.ok
+        assert "symlink -> 'other.txt'" in worktree_target.evidence
 
         pushed_kind = run("- type: path_exists\n"
                           "  path: tracked-link.txt\n  kind: file\n")

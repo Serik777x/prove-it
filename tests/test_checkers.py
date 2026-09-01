@@ -54,6 +54,26 @@ class TestPathAbsent:
         v = run("- type: path_absent\n  path: a.txt\n")
         assert not v.ok and "still present" in v.evidence
 
+    def test_inspection_error_is_not_proven_absence(
+            self, repo, monkeypatch):
+        locked = repo / "locked"
+        locked.mkdir()
+        target = locked / "present.txt"
+        target.write_text("present\n", encoding="utf-8")
+        original = os.lstat
+
+        def deny(path, *args, **kwargs):
+            if os.path.abspath(path) == str(target):
+                raise PermissionError("inspection denied")
+            return original(path, *args, **kwargs)
+
+        monkeypatch.setattr(os, "lstat", deny)
+        verdict = run("- type: path_absent\n"
+                      "  path: locked/present.txt\n  stage: worktree\n")
+
+        assert not verdict.ok
+        assert "cannot inspect path" in verdict.evidence
+
 
 class TestPathMoved:
     def test_endpoints_alone_do_not_prove_a_move(self, repo):
@@ -102,6 +122,14 @@ class TestDanglingSymlinkIsPresent:
         verdict = run("- type: path_moved\n  src: old-name\n"
                       "  dst: dangling-link\n")
         assert not verdict.ok and "without one Git history" in verdict.evidence
+
+    def test_link_target_text_is_not_file_content(self, dangling):
+        verdict = run("- type: file_contains\n"
+                      "  path: dangling-link\n  text: missing-target\n"
+                      "  stage: worktree\n")
+        assert not verdict.ok
+        assert "symlink -> 'missing-target'" in verdict.evidence
+        assert "not a regular file" in verdict.evidence
 
 
 class TestFileContains:
