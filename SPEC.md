@@ -108,6 +108,15 @@ return `status: ok` with a commit sha for a commit that never reached the
 remote. Checking the working tree proves nothing about that; checking
 ancestry against the remote ref does.
 
+`git_head_is.sha` must be a fixed hexadecimal object id or unambiguous
+hexadecimal prefix. Symbolic revisions such as `HEAD`, `main`, or `HEAD~1`
+are rejected because they move with the state they are supposed to prove.
+
+`git_pushed` proves a remote-tracking ref belonging to the requested
+`remote`. If `ref` is omitted, the current upstream must belong to that
+remote; a local `refs/heads/*` ref or an upstream on another remote fails
+with evidence instead of returning a false pass.
+
 ## Design notes
 
 ## Runner and CLI

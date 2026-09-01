@@ -4,6 +4,10 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def invoke(tmp_path, body, *extra):
@@ -30,15 +34,19 @@ def test_e2_missing_required_field_is_exit_2(tmp_path):
     assert "missing required field 'text'" in proc.stderr
 
 
-def test_e3_false_claim_is_exit_1_with_evidence(tmp_path):
-    target = tmp_path / "checkers.py"
-    target.write_text("one\ntwo\nthree\n", encoding="utf-8")
-    proc = invoke(tmp_path, "- type: file_contains\n  path: checkers.py\n"
-                  "  text: def check_git_pushed\n")
+def test_stable_e3_false_claim_is_exit_1_through_installed_console():
+    executable = Path(sys.executable).with_name(
+        "prove-it.exe" if os.name == "nt" else "prove-it")
+    assert executable.is_file(), f"console entry point is not installed: {executable}"
+    proc = subprocess.run(
+        [str(executable), "verify", "examples/e3-false-claim.yaml"],
+        cwd=PROJECT_ROOT, capture_output=True, text=True,
+    )
     assert proc.returncode == 1
-    assert "FAIL file_contains checkers.py" in proc.stdout
-    assert "file exists, 4 lines, text not present" in proc.stdout
-    assert "fell back from pushed" in proc.stdout
+    assert "FAIL stable-negative-example" in proc.stdout
+    assert "PROVE_IT_E3_SENTINEL_MUST_STAY_ABSENT" in proc.stdout
+    assert "file exists, 2 lines, text not present" in proc.stdout
+    assert "in the working tree" in proc.stdout
 
 
 def test_e4_true_claim_is_exit_0_with_evidence(tmp_path):

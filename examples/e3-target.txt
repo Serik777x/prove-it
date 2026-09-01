@@ -1,0 +1,1 @@
+This versioned fixture intentionally does not contain the sentinel named by the claim.

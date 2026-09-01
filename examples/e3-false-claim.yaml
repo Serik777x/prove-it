@@ -1,0 +1,5 @@
+- id: stable-negative-example
+  type: file_contains
+  path: examples/e3-target.txt
+  text: PROVE_IT_E3_SENTINEL_MUST_STAY_ABSENT
+  stage: worktree

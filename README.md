@@ -24,6 +24,15 @@ $ prove-it verify claims.yaml --json
 Exit `0` every claim proved, `1` a claim failed, `2` the claims file was
 malformed.
 
+The versioned negative example is stable: its target deliberately omits a
+sentinel that must remain absent, so adding a real checker cannot silently
+reverse the example from FAIL to PASS.
+
+```
+$ prove-it verify examples/e3-false-claim.yaml
+FAIL stable-negative-example -- looked for 'PROVE_IT_E3_SENTINEL_MUST_STAY_ABSENT' in the working tree -- file exists, 2 lines, text not present
+```
+
 ## "Done" means landed
 
 A filesystem claim checks the file **as it exists at the last commit that
