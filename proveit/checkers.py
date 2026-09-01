@@ -32,8 +32,9 @@ Two degradations, and the difference between them is the whole point:
 
 from __future__ import annotations
 
+import re
 import subprocess
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Callable
@@ -516,10 +517,13 @@ def check_frontmatter_equals(claim: Claim) -> Verdict:
 
 def _worktree_glob(root: Path, pattern: str, requested: str,
                    where: str) -> tuple[list[str], str, str | None]:
+    if (Path(pattern).is_absolute() or PurePosixPath(pattern).is_absolute()
+            or PureWindowsPath(pattern).is_absolute()):
+        return [], where, f"glob pattern must be relative, got {pattern!r}"
     try:
         matches = sorted(p.relative_to(root).as_posix()
                          for p in root.glob(pattern))
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, NotImplementedError) as exc:
         return [], where, str(exc)
     return matches, where, None
 
@@ -631,10 +635,19 @@ def check_git_head_is(claim: Claim) -> Verdict:
     code, head, err = _git_text(root, "rev-parse", "HEAD")
     if code != 0:
         return Verdict(False, f"cannot resolve HEAD in {root}: {err}")
-    code, expected, err = _git_text(root, "rev-parse", f"{claim['sha']}^{{commit}}")
-    detail = {"repo": str(root), "head": head, "claimed": claim["sha"]}
+    claimed = claim["sha"]
+    detail = {"repo": str(root), "head": head, "claimed": claimed}
+    if not re.fullmatch(r"[0-9a-fA-F]{4,40}", claimed):
+        return Verdict(
+            False,
+            f"claimed commit {claimed!r} is not a hexadecimal object id "
+            "or prefix; symbolic revisions are not fixed evidence",
+            detail,
+        )
+    code, expected, err = _git_text(root, "rev-parse", "--verify",
+                                    f"{claimed}^{{commit}}")
     if code != 0:
-        return Verdict(False, f"claimed commit {claim['sha']!r} does not resolve: {err}",
+        return Verdict(False, f"claimed commit {claimed!r} does not resolve: {err}",
                        detail)
     detail["expected"] = expected
     return Verdict(head == expected,
@@ -667,8 +680,28 @@ def check_git_pushed(claim: Claim) -> Verdict:
         return failure
     assert root is not None
     remote, named_ref = claim.get("remote", "origin"), claim.get("ref")
+    remote_prefix = f"refs/remotes/{remote}/"
     if named_ref:
-        target = named_ref if named_ref.startswith("refs/") else f"{remote}/{named_ref}"
+        if named_ref.startswith("refs/"):
+            target = named_ref
+        elif named_ref.startswith(f"{remote}/"):
+            target = f"refs/remotes/{named_ref}"
+        elif "/" in named_ref:
+            return Verdict(
+                False,
+                f"ref {named_ref!r} does not belong to requested remote "
+                f"{remote!r}",
+                {"repo": str(root), "remote": remote, "ref": named_ref},
+            )
+        else:
+            target = f"{remote_prefix}{named_ref}"
+        if not target.startswith(remote_prefix):
+            return Verdict(
+                False,
+                f"ref {named_ref!r} is not a remote-tracking ref for "
+                f"requested remote {remote!r}",
+                {"repo": str(root), "remote": remote, "ref": named_ref},
+            )
     else:
         code, target, err = _git_text(
             root, "rev-parse", "--abbrev-ref", "--symbolic-full-name",
@@ -676,13 +709,21 @@ def check_git_pushed(claim: Claim) -> Verdict:
         if code != 0 or not target:
             return Verdict(False, f"HEAD has no upstream tracking ref in {root}: {err}",
                            {"repo": str(root), "remote": remote})
+        if target.startswith(f"{remote}/"):
+            target = f"refs/remotes/{target}"
+        if not target.startswith(remote_prefix):
+            return Verdict(
+                False,
+                f"HEAD tracks {target!r}, not requested remote {remote!r}",
+                {"repo": str(root), "remote": remote, "ref": target},
+            )
     code, target_sha, err = _git_text(root, "rev-parse", "--verify", target)
     if code != 0:
         return Verdict(False, f"remote ref {target!r} does not resolve: {err}",
                        {"repo": str(root), "ref": target})
     _, head, _ = _git_text(root, "rev-parse", "HEAD")
     code, _, err = _git_text(root, "merge-base", "--is-ancestor", "HEAD", target)
-    detail = {"repo": str(root), "head": head, "ref": target,
+    detail = {"repo": str(root), "head": head, "remote": remote, "ref": target,
               "ref_sha": target_sha}
     if code == 0:
         return Verdict(True, f"HEAD {head[:12]} is pushed to {target} "

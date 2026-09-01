@@ -103,6 +103,14 @@ class TestGlobCount:
         verdict = run("- type: glob_count\n  pattern: '**/*.md'\n  count: 3\n")
         assert verdict.ok, verdict.evidence
 
+    def test_absolute_pattern_returns_evidence_instead_of_raising(self,
+                                                                  landed_repo):
+        verdict = run("- type: glob_count\n  root: .\n"
+                      "  pattern: /tmp/*\n  count: 0\n"
+                      "  stage: worktree\n")
+        assert not verdict.ok
+        assert "must be relative" in verdict.evidence
+
 
 class TestCommandExits:
     def test_expected_nonzero_exit_passes_with_evidence(self, tmp_path):
@@ -123,8 +131,15 @@ class TestGitCheckers:
     def test_head_is_accepts_short_sha(self, landed_repo):
         sha = git(landed_repo, "rev-parse", "--short", "HEAD")
         verdict = run("- type: git_head_is\n  repo: .\n"
-                      f"  sha: {sha}\n")
+                      f"  sha: '{sha}'\n")
         assert verdict.ok, verdict.evidence
+
+    @pytest.mark.parametrize("symbolic", ["HEAD", "main", "HEAD~1"])
+    def test_head_is_rejects_symbolic_revision(self, landed_repo, symbolic):
+        verdict = run("- type: git_head_is\n  repo: .\n"
+                      f"  sha: {symbolic}\n")
+        assert not verdict.ok
+        assert "not a hexadecimal object id" in verdict.evidence
 
     def test_clean_ignores_untracked_unless_requested(self, landed_repo):
         (landed_repo / "untracked.txt").write_text("x", encoding="utf-8")
@@ -145,3 +160,27 @@ class TestGitCheckers:
         assert not verdict.ok and "has not landed" in verdict.evidence
         git(landed_repo, "push")
         assert run("- type: git_pushed\n  repo: .\n").ok
+
+    def test_pushed_honours_requested_remote(self, landed_repo, tmp_path):
+        upstream = tmp_path / "upstream.git"
+        subprocess.run(["git", "init", "--bare", "-b", "main",
+                        str(upstream)], check=True, capture_output=True)
+        git(landed_repo, "remote", "add", "upstream", str(upstream))
+        git(landed_repo, "push", "-u", "upstream", "main")
+        (landed_repo / "only-upstream.txt").write_text("x\n", encoding="utf-8")
+        git(landed_repo, "add", "-A")
+        git(landed_repo, "commit", "-m", "only upstream")
+        git(landed_repo, "push", "upstream", "main")
+
+        verdict = run("- type: git_pushed\n  repo: .\n  remote: origin\n")
+        assert not verdict.ok
+        assert "not requested remote 'origin'" in verdict.evidence
+
+        local_ref = run("- type: git_pushed\n  repo: .\n  remote: origin\n"
+                        "  ref: refs/heads/main\n")
+        assert not local_ref.ok
+        assert "not a remote-tracking ref" in local_ref.evidence
+
+        explicit = run("- type: git_pushed\n  repo: .\n  remote: upstream\n"
+                       "  ref: main\n")
+        assert explicit.ok, explicit.evidence
