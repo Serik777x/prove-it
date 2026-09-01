@@ -72,6 +72,6 @@ booleans. The CLI emits human evidence or one JSON document and preserves the
 ## Develop
 
 ```
-python -m pip install -e .
+python -m pip install -e ".[test]"
 python -m pytest tests/ -q
 ```

@@ -2,6 +2,7 @@
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -17,6 +18,13 @@ def installed_console():
         "prove-it.exe" if os.name == "nt" else "prove-it")
     assert executable.is_file(), f"console entry point is not installed: {executable}"
     return executable
+
+
+def git(cwd, *args):
+    proc = subprocess.run(["git", "-C", str(cwd), *args],
+                          capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    return proc.stdout.strip()
 
 
 def invoke(tmp_path, body, *extra):
@@ -56,16 +64,32 @@ def test_stable_e3_false_claim_is_exit_1_through_installed_console():
 
 
 def test_approved_e3_literal_is_exit_1_through_installed_console(tmp_path):
-    claims = tmp_path / "claims.yaml"
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "--bare", "-b", "main", str(remote)],
+                   check=True, capture_output=True)
+    work = tmp_path / "work"
+    (work / "proveit").mkdir(parents=True)
+    git(work, "init", "-b", "main")
+    git(work, "config", "user.email", "tests@example.invalid")
+    git(work, "config", "user.name", "tests")
+    git(work, "config", "commit.gpgsign", "false")
+    git(work, "remote", "add", "origin", str(remote))
+    shutil.copy2(PROJECT_ROOT / "proveit" / "checkers.py",
+                 work / "proveit" / "checkers.py")
+    git(work, "add", "proveit/checkers.py")
+    git(work, "commit", "-m", "candidate")
+    git(work, "push", "-u", "origin", "main")
+
+    claims = work / "claims.yaml"
     claims.write_text(
         "- type: file_contains\n"
-        f"  path: {(PROJECT_ROOT / 'proveit' / 'checkers.py').as_posix()}\n"
+        "  path: proveit/checkers.py\n"
         "  text: def check_git_pushed\n",
         encoding="utf-8",
     )
     proc = subprocess.run(
         [str(installed_console()), "verify", str(claims)],
-        cwd=PROJECT_ROOT, capture_output=True, text=True,
+        cwd=work, capture_output=True, text=True,
     )
     assert proc.returncode == 1
     assert "FAIL file_contains" in proc.stdout
