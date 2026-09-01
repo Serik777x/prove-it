@@ -127,6 +127,20 @@ class TestTheLyingReceipt:
         assert v.ok
         assert landed[:7] in v.evidence and "origin/main" in v.evidence
 
+    def test_pushed_gitlink_cannot_satisfy_regular_file_claim(self, repo):
+        target = git(repo, "rev-parse", "HEAD")
+        git(repo, "update-index", "--add", "--cacheinfo",
+            f"160000,{target},vendor")
+        git(repo, "commit", "-m", "add gitlink")
+        git(repo, "push")
+
+        verdict = run("- type: path_exists\n  path: vendor\n  kind: file\n")
+
+        assert not verdict.ok
+        assert verdict.detail["kind"] == "special"
+        assert verdict.detail["special_type"] == "gitlink"
+        assert "claimed file" in verdict.evidence
+
     def test_command_cannot_make_a_cached_no_repo_fallback_go_stale(
             self, tmp_path):
         """Every claim observes repository topology at the time it runs."""

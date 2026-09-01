@@ -1,6 +1,8 @@
 """M002 -- checkers must fail loudly and say what they actually saw."""
 
 import os
+import stat
+from pathlib import Path
 
 import pytest
 
@@ -44,6 +46,43 @@ class TestPathExists:
         (repo / "d").mkdir()
         assert run("- type: path_exists\n  path: d\n").ok
 
+    def test_special_mode_cannot_satisfy_regular_file_claim(
+            self, repo, monkeypatch):
+        target = repo / "special"
+        target.write_text("placeholder")
+        original = Path.lstat
+
+        def special_mode(path, *args, **kwargs):
+            if os.path.abspath(path) == str(target):
+                values = [0] * 10
+                values[0] = stat.S_IFIFO | 0o644
+                return os.stat_result(values)
+            return original(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "lstat", special_mode)
+        verdict = run("- type: path_exists\n  path: special\n"
+                      "  kind: file\n  stage: worktree\n")
+
+        assert not verdict.ok
+        assert verdict.detail["kind"] == "special"
+        assert verdict.detail["special_type"] == "fifo"
+        assert "claimed file" in verdict.evidence
+
+    @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFO unavailable")
+    def test_real_fifo_is_reported_as_special(self, repo):
+        target = repo / "named-pipe"
+        try:
+            os.mkfifo(target)
+        except (OSError, NotImplementedError) as exc:
+            pytest.skip(f"FIFO unavailable on this host: {exc}")
+
+        verdict = run("- type: path_exists\n  path: named-pipe\n"
+                      "  kind: file\n  stage: worktree\n")
+
+        assert not verdict.ok
+        assert verdict.detail["kind"] == "special"
+        assert verdict.detail["special_type"] == "fifo"
+
 
 class TestPathAbsent:
     def test_passes_when_gone(self, repo):
@@ -60,14 +99,14 @@ class TestPathAbsent:
         locked.mkdir()
         target = locked / "present.txt"
         target.write_text("present\n", encoding="utf-8")
-        original = os.lstat
+        original = Path.lstat
 
         def deny(path, *args, **kwargs):
             if os.path.abspath(path) == str(target):
                 raise PermissionError("inspection denied")
             return original(path, *args, **kwargs)
 
-        monkeypatch.setattr(os, "lstat", deny)
+        monkeypatch.setattr(Path, "lstat", deny)
         verdict = run("- type: path_absent\n"
                       "  path: locked/present.txt\n  stage: worktree\n")
 

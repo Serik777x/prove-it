@@ -161,6 +161,11 @@ regex is a second thing to get wrong.
 path metadata, not file content, so pushed and worktree symlinks fail with
 evidence naming the link and target.
 
+`kind: file` means a regular file, not merely an existing non-directory
+entry. Worktree FIFOs, sockets, and devices are reported as special objects;
+pushed Git gitlinks are reported the same way. They may satisfy an unqualified
+`path_exists` claim, but never a regular-file claim.
+
 `count` on `file_contains` is an exact occurrence count when present.
 Omitted means "at least one".
 

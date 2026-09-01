@@ -117,11 +117,12 @@ class Resolution:
     stage: str
     where: str                      # evidence fragment, always rendered
     exists: bool
-    kind: str | None = None         # file | dir | symlink | None (unknown)
+    kind: str | None = None         # file | dir | symlink | special | None
     content: bytes | None = None    # only when content=True was asked for
     size: int | None = None         # bytes, for a file
     entries: int | None = None      # child count, for a directory
     link_target: str | None = None  # lexical target when kind == symlink
+    special_type: str | None = None  # fifo | socket | device | gitlink | other
     revision: str | None = None     # exact git commit for pushed observations
     error: str | None = None        # unresolvable -- fail loudly
     read_error: str | None = None   # it exists but could not be read
@@ -142,6 +143,9 @@ class Resolution:
             return f"file, {self.size} bytes"
         if self.kind == "symlink":
             return f"symlink -> {self.link_target!r}"
+        if self.kind == "special":
+            label = self.special_type or "other"
+            return f"special filesystem object ({label})"
         if self.read_error:
             return f"unreadable ({self.read_error})"
         return "missing"
@@ -155,6 +159,8 @@ class Resolution:
         }
         if self.link_target is not None:
             detail["link_target"] = self.link_target
+        if self.special_type is not None:
+            detail["special_type"] = self.special_type
         if self.revision is not None:
             detail["revision"] = self.revision
         return detail
@@ -337,6 +343,17 @@ def _spec(sha: str, rel: str) -> str:
     return f"{sha}^{{tree}}" if rel in ("", ".") else f"{sha}:{rel}"
 
 
+def _special_type(mode: int) -> str:
+    """Name a non-regular, non-directory, non-symlink filesystem mode."""
+    classifiers = (
+        (getattr(stat, "S_ISFIFO", lambda _: False), "fifo"),
+        (getattr(stat, "S_ISSOCK", lambda _: False), "socket"),
+        (getattr(stat, "S_ISCHR", lambda _: False), "character-device"),
+        (getattr(stat, "S_ISBLK", lambda _: False), "block-device"),
+    )
+    return next((name for check, name in classifiers if check(mode)), "other")
+
+
 def _resolve_worktree(path: Path, requested: str, where: str,
                       want_content: bool) -> Resolution:
     def make(**kw):
@@ -364,6 +381,9 @@ def _resolve_worktree(path: Path, requested: str, where: str,
         except OSError:
             entries = None
         return make(exists=True, kind="dir", entries=entries)
+    if not stat.S_ISREG(entry_stat.st_mode):
+        return make(exists=True, kind="special",
+                    special_type=_special_type(entry_stat.st_mode))
     size = entry_stat.st_size
 
     content = None
@@ -409,6 +429,9 @@ def _resolve_pushed(root: Path, sha: str, upstream: str, rel: str,
         return make(exists=True, kind="symlink", size=len(raw),
                     link_target=target,
                     content=raw if want_content else None)
+    if mode and not mode.startswith("100"):
+        special_type = "gitlink" if mode == "160000" else f"git-mode-{mode}"
+        return make(exists=True, kind="special", special_type=special_type)
 
     code, size_text, _ = _git_text(root, "cat-file", "-s", spec)
     size = int(size_text) if code == 0 and size_text.isdigit() else None
