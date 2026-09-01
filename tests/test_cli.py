@@ -140,6 +140,30 @@ def test_json_is_one_document_with_same_exit_code(tmp_path):
     assert payload["claims"][0]["status"] == "PASS"
 
 
+@pytest.mark.parametrize("json_mode", [False, True])
+def test_recursive_frontmatter_emits_verdict_without_traceback(
+        tmp_path, json_mode):
+    (tmp_path / "recursive.md").write_text(
+        "---\nloop: &loop [*loop]\n---\nbody\n", encoding="utf-8")
+    extra = ("--json",) if json_mode else ()
+    proc = invoke(
+        tmp_path,
+        "- type: frontmatter_equals\n  path: recursive.md\n"
+        "  key: loop\n  value: []\n  stage: worktree\n",
+        *extra,
+    )
+
+    assert proc.returncode == 1
+    assert "Traceback" not in proc.stderr
+    if json_mode:
+        payload = json.loads(proc.stdout)
+        assert payload["claims"][0]["status"] == "FAIL"
+        assert "recursive YAML alias" in payload["claims"][0]["evidence"]
+    else:
+        assert "FAIL frontmatter_equals" in proc.stdout
+        assert "recursive YAML alias" in proc.stdout
+
+
 def test_unreadable_claims_path_is_exit_2(tmp_path):
     env = dict(os.environ)
     env["PYTHONPATH"] = str(os.path.dirname(os.path.dirname(__file__)))

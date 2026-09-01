@@ -65,6 +65,21 @@ class TestFrontmatterEquals:
         assert not verdict.ok
         assert verdict.detail["actual"] == 2
 
+    def test_recursive_actual_value_returns_failed_verdict(self, landed_repo):
+        (landed_repo / "recursive.md").write_text(
+            "---\nloop: &loop [*loop]\n---\nbody\n", encoding="utf-8")
+        git(landed_repo, "add", "recursive.md")
+        git(landed_repo, "commit", "-m", "recursive frontmatter")
+        git(landed_repo, "push")
+
+        verdict = run("- type: frontmatter_equals\n  path: recursive.md\n"
+                      "  key: loop\n  value: []\n")
+
+        assert not verdict.ok
+        assert "recursive YAML alias" in verdict.evidence
+        assert "actual" not in verdict.detail
+        assert "actual_error" in verdict.detail
+
 
 class TestGlobCount:
     def test_untracked_match_does_not_satisfy_pushed_default(self, landed_repo):

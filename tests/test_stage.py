@@ -73,6 +73,19 @@ def commit_only(work, name, body):
 
 
 class TestRepositoryRootResolution:
+    @staticmethod
+    def _landed_inner(repo):
+        remote = repo.parent / "inner-remote.git"
+        subprocess.run(["git", "init", "--bare", "-b", "main", str(remote)],
+                       check=True, capture_output=True)
+        inner = repo / "vendor"
+        _init(inner, remote)
+        (inner / "inner.txt").write_text("inner\n", encoding="utf-8")
+        git(inner, "add", "inner.txt")
+        git(inner, "commit", "-m", "inner")
+        git(inner, "push", "-u", "origin", "main")
+        return inner
+
     def test_default_stage_root_without_landing_fails_loudly(
             self, tmp_path, monkeypatch):
         work = tmp_path / "no-remote-root"
@@ -122,6 +135,31 @@ class TestRepositoryRootResolution:
         assert verdict.detail["stage"] == "worktree"
         assert verdict.detail["kind"] == "symlink"
         assert "fell back from pushed" in verdict.evidence
+
+    def test_unlanded_nested_repository_cannot_override_outer_repo(self, repo):
+        self._landed_inner(repo)
+
+        verdict = run("- type: path_exists\n  path: vendor\n  kind: dir\n")
+
+        assert not verdict.ok
+        assert verdict.detail["stage"] == "pushed"
+        assert "present in the working tree but NOT at that commit" in \
+            verdict.evidence
+        assert "origin/main" in verdict.evidence
+
+    def test_pushed_gitlink_is_not_inner_repository_directory(self, repo):
+        self._landed_inner(repo)
+        git(repo, "add", "vendor")
+        git(repo, "commit", "-m", "land gitlink")
+        git(repo, "push")
+
+        verdict = run("- type: path_exists\n  path: vendor\n  kind: dir\n")
+
+        assert not verdict.ok
+        assert verdict.detail["stage"] == "pushed"
+        assert verdict.detail["kind"] == "special", verdict.evidence
+        assert verdict.detail["special_type"] == "gitlink"
+        assert "claimed dir" in verdict.evidence
 
 
 class TestTheLyingReceipt:

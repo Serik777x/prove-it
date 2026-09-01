@@ -124,6 +124,14 @@ class TestFieldTypes:
         assert errors == []
         assert claims[0]["value"] == 3
 
+    def test_recursive_frontmatter_value_is_a_parse_error(self):
+        messages = errs(
+            "- type: frontmatter_equals\n  path: a.md\n  key: loop\n"
+            "  value: &expected\n    - *expected\n")
+
+        assert len(messages) == 1
+        assert "recursive YAML alias" in messages[0]
+
     @pytest.mark.parametrize("claim_type", [
         "git_head_is", "git_clean", "git_pushed"])
     def test_nul_in_git_repo_is_a_parse_error(self, claim_type):

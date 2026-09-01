@@ -47,7 +47,7 @@ from typing import Callable
 import yaml
 
 from .grammar import ALLOWED_STAGES, DEFAULT_STAGE, STAGE_PUSHED, STAGE_WORKTREE
-from .parse import Claim
+from .parse import Claim, yaml_tree_error
 
 GIT_TIMEOUT = 30
 EVIDENCE_LIMIT = 500
@@ -224,7 +224,8 @@ def _repo_location(path: Path, *, follow_final_dir: bool = False
     unless the caller explicitly identifies it as a glob container.
     """
     absolute = _lexical_absolute(path)
-    start = (absolute if absolute.is_dir() and not absolute.is_symlink()
+    start = (absolute if follow_final_dir and absolute.is_dir()
+             and not absolute.is_symlink()
              else absolute.parent)
     for candidate in (start, *start.parents):
         if not candidate.is_dir() or candidate.is_symlink():
@@ -239,6 +240,13 @@ def _repo_location(path: Path, *, follow_final_dir: bool = False
         except ValueError:
             continue
         return _RepoLocation(root_path, rel)
+
+    if (not follow_final_dir and absolute.is_dir()
+            and not absolute.is_symlink()):
+        root = _repo_root_of_dir(str(absolute))
+        if root and os.path.normcase(os.path.abspath(root)) == os.path.normcase(
+                str(absolute)):
+            return _RepoLocation(Path(root), "")
 
     target = absolute if follow_final_dir else absolute.parent
     for candidate in (target, *target.parents):
@@ -405,20 +413,23 @@ def _resolve_pushed(root: Path, sha: str, upstream: str, rel: str,
         return Resolution(requested=STAGE_PUSHED, stage=STAGE_PUSHED,
                           where=where, revision=sha, **kw)
 
-    code, kind, _ = _git_text(root, "cat-file", "-t", spec)
-    if code != 0:
-        return make(exists=False)
+    if rel in ("", "."):
+        mode = "040000"
+    else:
+        code, entry, err = _git(
+            root, "ls-tree", "-z", sha, "--", f":(literal){rel}")
+        if code != 0:
+            return make(exists=False,
+                        error=err or "git could not inspect the pushed tree")
+        if not entry:
+            return make(exists=False)
+        header = entry.split(b"\t", 1)[0]
+        mode = header.split(b" ", 1)[0].decode("ascii", "replace")
 
-    if kind == "tree":
+    if mode == "040000":
         code, listing, _ = _git_text(root, "ls-tree", "--name-only", spec)
         entries = len(listing.splitlines()) if code == 0 else None
         return make(exists=True, kind="dir", entries=entries)
-
-    code, entry, _ = _git(root, "ls-tree", "-z", sha, "--", rel)
-    mode = None
-    if code == 0 and entry:
-        header = entry.split(b"\t", 1)[0]
-        mode = header.split(b" ", 1)[0].decode("ascii", "replace")
     if mode == "120000":
         code, raw, err = _git(root, "cat-file", "blob", spec)
         if code != 0:
@@ -793,8 +804,14 @@ def check_frontmatter_equals(claim: Claim) -> Verdict:
     path = Path(claim["path"])
     key, expected = claim["key"], claim["value"]
     res, body = _text_at(path, _stage_of(claim))
-    detail = {"path": str(path), "key": key, "expected": expected,
-              **res.as_detail()}
+    expected_problem = yaml_tree_error(expected)
+    detail = {"path": str(path), "key": key, **res.as_detail()}
+    if expected_problem:
+        detail["expected_error"] = expected_problem
+        return Verdict(False,
+                       f"claimed frontmatter value is not comparison-safe: "
+                       f"{expected_problem}", detail)
+    detail["expected"] = expected
     if res.error:
         return _unresolvable(str(path), res)
     if not res.exists:
@@ -830,8 +847,21 @@ def check_frontmatter_equals(claim: Claim) -> Verdict:
                        f"frontmatter key {key!r} missing in {path} {res.where}",
                        detail)
     actual = frontmatter[key]
+    actual_problem = yaml_tree_error(actual)
+    if actual_problem:
+        detail["actual_error"] = actual_problem
+        return Verdict(False,
+                       f"frontmatter key {key!r} in {path} is not "
+                       f"comparison-safe {res.where}: {actual_problem}", detail)
     detail["actual"] = actual
-    if actual != expected:
+    try:
+        equal = actual == expected
+    except (RecursionError, TypeError, ValueError) as exc:
+        detail["comparison_error"] = str(exc)
+        return Verdict(False,
+                       f"frontmatter key {key!r} in {path} could not be "
+                       f"compared safely {res.where}: {exc}", detail)
+    if not equal:
         return Verdict(False,
                        f"frontmatter {key!r} is {actual!r}, claimed "
                        f"{expected!r} in {path} {res.where}", detail)

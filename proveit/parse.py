@@ -7,6 +7,7 @@ round trips.
 """
 
 from dataclasses import dataclass
+from datetime import date, datetime
 from typing import Any
 
 import yaml
@@ -58,6 +59,41 @@ def _type_name(t: type) -> str:
     return {str: "string", int: "integer", bool: "boolean"}.get(t, t.__name__)
 
 
+def yaml_tree_error(value: Any, *, max_depth: int = 100) -> str | None:
+    """Return why a value is not a finite, comparison-safe YAML data tree."""
+    scalar_types = (type(None), bool, int, float, str, date, datetime)
+    active: set[int] = set()
+    stack: list[tuple[str, Any, str, int]] = [("enter", value, "value", 0)]
+
+    while stack:
+        action, current, where, depth = stack.pop()
+        if action == "exit":
+            active.remove(id(current))
+            continue
+        if isinstance(current, scalar_types):
+            continue
+        if not isinstance(current, (list, dict)):
+            return f"{where} has unsupported YAML type {type(current).__name__}"
+        if depth > max_depth:
+            return f"{where} exceeds maximum supported nesting depth {max_depth}"
+        identity = id(current)
+        if identity in active:
+            return f"{where} contains a recursive YAML alias"
+        active.add(identity)
+        stack.append(("exit", current, where, depth))
+        if isinstance(current, dict):
+            for key, child in reversed(list(current.items())):
+                if not isinstance(key, str):
+                    return (f"{where} has unsupported non-string mapping key "
+                            f"of type {type(key).__name__}")
+                stack.append(("enter", child, f"{where}.{key}", depth + 1))
+        else:
+            for index in range(len(current) - 1, -1, -1):
+                stack.append(("enter", current[index],
+                              f"{where}[{index}]", depth + 1))
+    return None
+
+
 def _validate_one(index: int, raw: Any) -> tuple[Claim | None, list[ParseError]]:
     errors: list[ParseError] = []
 
@@ -97,6 +133,11 @@ def _validate_one(index: int, raw: Any) -> tuple[Claim | None, list[ParseError]]
             continue
         expected = accepted[key]
         if expected is object:
+            problem = yaml_tree_error(value)
+            if problem:
+                errors.append(ParseError(
+                    f"{name} field {key!r} is not a supported YAML value: "
+                    f"{problem}", index))
             continue
         # bool is a subclass of int -- never let one satisfy the other
         mismatched = not isinstance(value, expected) or (

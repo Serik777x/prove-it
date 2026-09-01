@@ -169,6 +169,13 @@ pushed Git gitlinks are reported the same way. They may satisfy an unqualified
 `count` on `file_contains` is an exact occurrence count when present.
 Omitted means "at least one".
 
+`frontmatter_equals.value` is a finite YAML data tree: scalar values, lists,
+and string-keyed mappings are supported. Recursive aliases, unsupported YAML
+container types, and excessive nesting are refused as parse errors. The same
+validation is applied to the observed frontmatter value before equality, so a
+malformed recursive value produces an evidence-bearing failure, never a
+traceback or recursive JSON document.
+
 `path_moved` deliberately checks both ends **and** provenance. A copy that
 left the source in place is not a move, but neither is a deletion beside an
 unrelated pre-existing destination. Pushed claims require a matching Git
@@ -197,7 +204,8 @@ physical repository-relative path. An alias therefore cannot trigger the
 no-repo worktree fallback for an unpushed create, deletion, content edit,
 frontmatter edit, or glob match.
 
-A claimed non-symlink directory may itself be the repository root. It resolves
-as relative path `""` at the pushed commit; repository-root claims do not take
-the no-repository worktree fallback. A claimed final directory symlink remains
-a lexical symlink unless it is explicitly the container of a glob claim.
+If no enclosing lexical repository exists, a claimed non-symlink directory may
+itself establish the repository root and resolves as relative path `""` at the
+pushed commit. An enclosing lexical repository always wins over a nested Git
+repository at the claimed path. A claimed final directory symlink remains a
+lexical symlink unless it is explicitly the container of a glob claim.
