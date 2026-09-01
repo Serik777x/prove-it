@@ -13,12 +13,15 @@ there with exactly the claimed bytes. It must FAIL here.
 
 import subprocess
 import os
+import sys
 
 import pytest
+import yaml
 
-from proveit.checkers import CHECKERS, _repo_root_of_dir, content_at
+from proveit.checkers import CHECKERS, content_at
 from proveit.grammar import CLAIM_TYPES, DEFAULT_STAGE, STAGED_TYPES
 from proveit.parse import parse_claims
+from proveit.runner import verify_text
 
 
 def git(cwd, *args) -> str:
@@ -33,14 +36,6 @@ def run(text):
     assert errors == [], errors
     claim = claims[0]
     return CHECKERS[claim.type](claim)
-
-
-@pytest.fixture(autouse=True)
-def _no_stale_topology():
-    """Repo discovery is cached; a fresh tmp_path per test must not inherit."""
-    _repo_root_of_dir.cache_clear()
-    yield
-    _repo_root_of_dir.cache_clear()
 
 
 def _init(work, remote=None):
@@ -131,6 +126,51 @@ class TestTheLyingReceipt:
                 "  text: landed content\n")
         assert v.ok
         assert landed[:7] in v.evidence and "origin/main" in v.evidence
+
+    def test_command_cannot_make_a_cached_no_repo_fallback_go_stale(
+            self, tmp_path):
+        """Every claim observes repository topology at the time it runs."""
+        landed = tmp_path / "landed.txt"
+        landed.write_text("landed\n", encoding="utf-8")
+        setup = tmp_path / "make_repo_then_unpushed_move.py"
+        setup.write_text(
+            "from pathlib import Path\n"
+            "import subprocess\n"
+            "work = Path.cwd()\n"
+            "remote = work.parent / 'topology-remote.git'\n"
+            "def git(*args):\n"
+            "    subprocess.run(['git', '-C', str(work), *args], "
+            "check=True, capture_output=True)\n"
+            "subprocess.run(['git', 'init', '--bare', '-b', 'main', "
+            "str(remote)], check=True, capture_output=True)\n"
+            "git('init', '-b', 'main')\n"
+            "git('config', 'user.email', 'tests@example.invalid')\n"
+            "git('config', 'user.name', 'tests')\n"
+            "git('config', 'commit.gpgsign', 'false')\n"
+            "git('remote', 'add', 'origin', str(remote))\n"
+            "git('add', 'landed.txt')\n"
+            "git('commit', '-m', 'landed')\n"
+            "git('push', '-u', 'origin', 'main')\n"
+            "git('mv', 'landed.txt', 'moved.txt')\n"
+            "git('commit', '-m', 'unpushed move')\n",
+            encoding="utf-8",
+        )
+        command = f'"{sys.executable}" "{setup}"'
+        claims = yaml.safe_dump([
+            {"type": "path_exists", "path": str(landed)},
+            {"type": "command_exits", "cmd": command,
+             "cwd": str(tmp_path)},
+            {"type": "path_moved", "src": str(landed),
+             "dst": str(tmp_path / "moved.txt")},
+        ], sort_keys=False)
+
+        result = verify_text(claims)
+
+        assert result.exit_code == 1
+        assert [item.verdict.ok for item in result.results] == [True, True, False]
+        evidence = result.results[-1].verdict.evidence
+        assert "at pushed commit" in evidence
+        assert "still present" in evidence
 
 
 class TestOtherCheckersHonourTheStage:

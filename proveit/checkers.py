@@ -37,7 +37,6 @@ import re
 import subprocess
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from dataclasses import dataclass
-from functools import lru_cache
 from typing import Callable
 
 import yaml
@@ -145,12 +144,13 @@ def _nearest_existing_dir(path: Path) -> Path | None:
     return None
 
 
-@lru_cache(maxsize=None)
 def _repo_root_of_dir(directory: str) -> str | None:
-    """Repo containing `directory`, or None. Cached: TOPOLOGY ONLY.
+    """Repo containing `directory`, or None.
 
-    Deliberately does not cache anything a push can change -- a run that
-    checks a path, pushes, and checks again must see the push.
+    Repository topology is deliberately read on every claim. A preceding
+    ``command_exits`` claim can create, remove, or relocate a repository in
+    the same verification run; caching even a negative lookup can therefore
+    turn a pushed-state question into the no-repo worktree fallback.
     """
     code, out, _ = _git_text(directory, "rev-parse", "--show-toplevel")
     return out if code == 0 and out else None

@@ -5,7 +5,7 @@ import sys
 
 import pytest
 
-from proveit.checkers import CHECKERS, _repo_root_of_dir
+from proveit.checkers import CHECKERS
 from proveit.parse import parse_claims
 from proveit.runner import RunResult, verify_text
 
@@ -22,13 +22,6 @@ def run(text):
     assert errors == [], errors
     claim = claims[0]
     return CHECKERS[claim.type](claim)
-
-
-@pytest.fixture(autouse=True)
-def clear_repo_cache():
-    _repo_root_of_dir.cache_clear()
-    yield
-    _repo_root_of_dir.cache_clear()
 
 
 @pytest.fixture
