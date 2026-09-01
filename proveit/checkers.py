@@ -157,11 +157,22 @@ def _repo_root_of_dir(directory: str) -> str | None:
 
 
 def _repo_root(path: Path) -> Path | None:
-    start = _nearest_existing_dir(path)
-    if start is None:
-        return None
-    root = _repo_root_of_dir(str(start.resolve()))
-    return Path(root) if root else None
+    absolute = _lexical_absolute(path)
+    start = (absolute if absolute.is_dir() and not absolute.is_symlink()
+             else absolute.parent)
+    for candidate in (start, *start.parents):
+        if not candidate.is_dir() or candidate.is_symlink():
+            continue
+        root = _repo_root_of_dir(str(candidate))
+        if not root:
+            continue
+        root_path = Path(root)
+        try:
+            absolute.relative_to(root_path)
+        except ValueError:
+            continue
+        return root_path
+    return None
 
 
 def _lexical_absolute(path: Path) -> Path:
@@ -392,10 +403,30 @@ def check_path_moved(claim: Claim) -> Verdict:
     if dst_res.error:
         return _unresolvable(str(dst), dst_res)
 
-    where = src_res.where
+    src_root = _repo_root(src) if stage == STAGE_PUSHED else None
+    dst_root = _repo_root(dst) if stage == STAGE_PUSHED else None
+    same_observation = (src_res.stage == dst_res.stage
+                        and src_res.where == dst_res.where
+                        and src_root == dst_root)
+    provenance = (f"source {src_res.where}; destination {dst_res.where}")
     detail = {"src": str(src), "dst": str(dst),
               "src_exists": src_res.exists, "dst_exists": dst_res.exists,
-              **src_res.as_detail()}
+              "requested_stage": stage,
+              "src_resolution": src_res.as_detail(),
+              "dst_resolution": dst_res.as_detail(),
+              "src_repo": str(src_root) if src_root else None,
+              "dst_repo": str(dst_root) if dst_root else None}
+
+    if stage == STAGE_PUSHED and not same_observation:
+        return Verdict(
+            False,
+            f"cannot prove one pushed move across different observations -- "
+            f"{provenance}; use stage: worktree to assert a local "
+            "cross-boundary move on purpose",
+            detail,
+        )
+
+    where = src_res.where
 
     if src_res.exists and dst_res.exists:
         return Verdict(False,

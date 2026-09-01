@@ -251,6 +251,70 @@ class TestPushedSymlinksAreLexical:
         assert landed.ok, landed.evidence
         assert not changed.ok, changed.evidence
 
+    @pytest.fixture
+    def intermediate_link(self, repo, tmp_path):
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "secret.txt").write_text(
+            "unlanded secret\n", encoding="utf-8")
+        (outside / "frontmatter.md").write_text(
+            "---\nstatus: unlanded\n---\n", encoding="utf-8")
+        link = repo / "escape-dir"
+        try:
+            os.symlink(outside, link, target_is_directory=True)
+        except (OSError, NotImplementedError) as exc:
+            pytest.skip(f"directory symlinks unavailable on this host: {exc}")
+        return outside
+
+    def test_intermediate_link_cannot_satisfy_path_exists(
+            self, intermediate_link):
+        verdict = run("- type: path_exists\n"
+                      "  path: escape-dir/secret.txt\n")
+        assert not verdict.ok and verdict.detail["stage"] == "pushed"
+
+    def test_intermediate_link_is_absent_at_pushed_state(
+            self, intermediate_link):
+        assert run("- type: path_absent\n"
+                   "  path: escape-dir/secret.txt\n").ok
+
+    def test_intermediate_link_cannot_be_move_destination(
+            self, intermediate_link):
+        verdict = run("- type: path_moved\n  src: old.md\n"
+                      "  dst: escape-dir/secret.txt\n")
+        assert not verdict.ok and "deletion, not a move" in verdict.evidence
+
+    def test_intermediate_link_cannot_supply_file_content(
+            self, intermediate_link):
+        verdict = run("- type: file_contains\n"
+                      "  path: escape-dir/secret.txt\n"
+                      "  text: unlanded secret\n")
+        assert not verdict.ok and verdict.detail["stage"] == "pushed"
+
+    def test_intermediate_link_cannot_supply_frontmatter(
+            self, intermediate_link):
+        verdict = run("- type: frontmatter_equals\n"
+                      "  path: escape-dir/frontmatter.md\n"
+                      "  key: status\n  value: unlanded\n")
+        assert not verdict.ok and verdict.detail["stage"] == "pushed"
+
+    def test_pushed_glob_does_not_follow_intermediate_link(
+            self, intermediate_link):
+        verdict = run("- type: glob_count\n  root: escape-dir\n"
+                      "  pattern: '*'\n  count: 0\n")
+        assert verdict.ok, verdict.evidence
+
+    def test_move_refuses_mixed_pushed_and_worktree_observations(
+            self, repo, intermediate_link):
+        outside = intermediate_link / "secret.txt"
+        verdict = run("- type: path_moved\n  src: old.md\n"
+                      f"  dst: {str(outside)!r}\n")
+        assert not verdict.ok
+        assert "different observations" in verdict.evidence
+        assert "source at pushed commit" in verdict.evidence
+        assert "destination in the working tree" in verdict.evidence
+        assert verdict.detail["src_resolution"]["stage"] == "pushed"
+        assert verdict.detail["dst_resolution"]["stage"] == "worktree"
+
 
 class TestBehindClone:
     """merge-base semantics, pinned deliberately.
