@@ -6,8 +6,9 @@ skipped claim. A verifier that silently ignores what it does not
 understand reports green for work it never looked at, which is the exact
 failure this tool exists to catch.
 
-A claims file is either a bare YAML list of claims, or a mapping with a
-top-level `claims:` key. No third shape is guessed at.
+A claims file is either a bare YAML list of claims, or a mapping whose only
+top-level key is `claims:`. Extra mapping-form keys are parse errors; no third
+shape or unverified sibling material is silently ignored.
 
 Every required string must contain at least one non-whitespace character.
 An empty literal search or blank command would otherwise return a false green
@@ -180,6 +181,9 @@ Equality is recursive and type-strict: YAML boolean `true` is not integer `1`,
 and integer `1` is not floating-point `1.0`, including inside lists and maps.
 Duplicate mapping keys are refused in both claim YAML and observed frontmatter;
 the checker never silently accepts PyYAML's last-key-wins interpretation.
+YAML scalars that the safe constructor cannot represent, including invalid
+timestamps, are parse errors in claim files and evidence-bearing failures in
+observed frontmatter; constructor exceptions never escape as tracebacks.
 
 `git_clean` overrides repository submodule-ignore configuration when observing
 status. A dirty or untracked submodule cannot be hidden by `.gitmodules`

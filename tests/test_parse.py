@@ -26,8 +26,19 @@ class TestShape:
         assert len(claims) == 1
 
     def test_mapping_without_claims_key_rejected(self):
-        assert "mapping form must have a top-level 'claims' key" in errs(
-            "assertions:\n  - type: path_exists\n    path: x\n")
+        messages = errs("assertions:\n  - type: path_exists\n    path: x\n")
+        assert "mapping form must have a top-level 'claims' key" in messages
+        assert "mapping form has unknown top-level field 'assertions'. accepted: claims" in messages
+
+    def test_mapping_form_rejects_every_extra_top_level_field(self):
+        messages = errs(
+            "claims:\n  - type: path_exists\n    path: README.md\n"
+            "ignored_typo: true\nalso_ignored: false\n")
+
+        assert messages == [
+            "mapping form has unknown top-level field 'also_ignored'. accepted: claims",
+            "mapping form has unknown top-level field 'ignored_typo'. accepted: claims",
+        ]
 
     def test_empty_file_rejected(self):
         assert errs("") == ["claims file is empty"]
@@ -49,6 +60,14 @@ class TestShape:
 
         assert len(messages) == 1
         assert "duplicate key 'path'" in messages[0]
+
+    def test_invalid_timestamp_is_reported_not_raised(self):
+        messages = errs(
+            "- type: frontmatter_equals\n  path: note.md\n"
+            "  key: status\n  value: 0000-01-01\n")
+
+        assert len(messages) == 1
+        assert messages[0].startswith("not valid YAML: invalid YAML scalar:")
 
     def test_non_mapping_claim_rejected(self):
         assert "claim must be a mapping, got str" in errs("- just-a-string\n")

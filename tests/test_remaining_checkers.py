@@ -114,6 +114,20 @@ class TestFrontmatterEquals:
         assert "invalid YAML frontmatter" in verdict.evidence
         assert "duplicate key 'status'" in verdict.evidence
 
+    def test_invalid_timestamp_frontmatter_is_unresolvable(self, landed_repo):
+        (landed_repo / "invalid-date.md").write_text(
+            "---\nstatus: 0000-01-01\n---\nbody\n", encoding="utf-8")
+        git(landed_repo, "add", "invalid-date.md")
+        git(landed_repo, "commit", "-m", "invalid date frontmatter")
+        git(landed_repo, "push")
+
+        verdict = run("- type: frontmatter_equals\n  path: invalid-date.md\n"
+                      "  key: status\n  value: approved\n")
+
+        assert not verdict.ok
+        assert "invalid YAML frontmatter" in verdict.evidence
+        assert "invalid YAML scalar" in verdict.evidence
+
 
 class TestGlobCount:
     def test_untracked_match_does_not_satisfy_pushed_default(self, landed_repo):

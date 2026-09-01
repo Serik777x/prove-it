@@ -228,6 +228,69 @@ def test_duplicate_claim_key_is_exit_2_without_traceback(tmp_path, json_mode):
         assert "duplicate key 'path'" in proc.stderr
 
 
+@pytest.mark.parametrize("json_mode", [False, True])
+def test_mapping_form_extra_key_is_exit_2_without_traceback(tmp_path, json_mode):
+    extra = ("--json",) if json_mode else ()
+    proc = invoke(
+        tmp_path,
+        "claims:\n  - type: path_exists\n    path: README.md\n"
+        "ignored_typo:\n  - type: path_absent\n    path: README.md\n",
+        *extra,
+    )
+
+    assert proc.returncode == 2
+    assert "Traceback" not in proc.stderr
+    if json_mode:
+        payload = json.loads(proc.stdout)
+        assert payload["exit_code"] == 2
+        assert "unknown top-level field 'ignored_typo'" in payload["errors"][0]
+    else:
+        assert "unknown top-level field 'ignored_typo'" in proc.stderr
+
+
+@pytest.mark.parametrize("json_mode", [False, True])
+def test_invalid_claim_timestamp_is_exit_2_without_traceback(tmp_path, json_mode):
+    extra = ("--json",) if json_mode else ()
+    proc = invoke(
+        tmp_path,
+        "- type: frontmatter_equals\n  path: note.md\n"
+        "  key: status\n  value: 0000-01-01\n",
+        *extra,
+    )
+
+    assert proc.returncode == 2
+    assert "Traceback" not in proc.stderr
+    if json_mode:
+        payload = json.loads(proc.stdout)
+        assert payload["exit_code"] == 2
+        assert "invalid YAML scalar" in payload["errors"][0]
+    else:
+        assert "invalid YAML scalar" in proc.stderr
+
+
+@pytest.mark.parametrize("json_mode", [False, True])
+def test_invalid_observed_timestamp_is_failed_verdict(tmp_path, json_mode):
+    (tmp_path / "invalid-date.md").write_text(
+        "---\nstatus: 0000-01-01\n---\nbody\n", encoding="utf-8")
+    extra = ("--json",) if json_mode else ()
+    proc = invoke(
+        tmp_path,
+        "- type: frontmatter_equals\n  path: invalid-date.md\n"
+        "  key: status\n  value: approved\n  stage: worktree\n",
+        *extra,
+    )
+
+    assert proc.returncode == 1
+    assert "Traceback" not in proc.stderr
+    if json_mode:
+        payload = json.loads(proc.stdout)
+        assert payload["claims"][0]["status"] == "FAIL"
+        assert "invalid YAML scalar" in payload["claims"][0]["evidence"]
+    else:
+        assert "FAIL frontmatter_equals" in proc.stdout
+        assert "invalid YAML scalar" in proc.stdout
+
+
 def test_unreadable_claims_path_is_exit_2(tmp_path):
     env = dict(os.environ)
     env["PYTHONPATH"] = str(os.path.dirname(os.path.dirname(__file__)))

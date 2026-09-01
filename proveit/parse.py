@@ -46,7 +46,14 @@ UniqueKeySafeLoader.add_constructor(
 
 def safe_load_unique(text: str):
     """Load trusted YAML types while rejecting duplicate mapping keys."""
-    return yaml.load(text, Loader=UniqueKeySafeLoader)
+    try:
+        return yaml.load(text, Loader=UniqueKeySafeLoader)
+    except (ValueError, OverflowError) as exc:
+        # PyYAML's timestamp constructor can leak builtin exceptions for
+        # syntactically valid but impossible dates (for example year zero).
+        # Normalize them at the shared load boundary so callers can treat all
+        # unconstructable YAML as a normal parse failure.
+        raise yaml.YAMLError(f"invalid YAML scalar: {exc}") from exc
 
 
 @dataclass(frozen=True)
@@ -234,9 +241,17 @@ def parse_claims(text: str) -> tuple[list[Claim], list[ParseError]]:
         return [], [ParseError("claims file is empty")]
 
     if isinstance(doc, dict):
+        shape_errors: list[ParseError] = []
         if "claims" not in doc:
-            return [], [ParseError(
-                "mapping form must have a top-level 'claims' key")]
+            shape_errors.append(ParseError(
+                "mapping form must have a top-level 'claims' key"))
+        for extra in sorted((key for key in doc if key != "claims"),
+                            key=repr):
+            shape_errors.append(ParseError(
+                f"mapping form has unknown top-level field {extra!r}. "
+                "accepted: claims"))
+        if shape_errors:
+            return [], shape_errors
         doc = doc["claims"]
 
     if not isinstance(doc, list):
