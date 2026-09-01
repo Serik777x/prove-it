@@ -94,6 +94,27 @@ def yaml_tree_error(value: Any, *, max_depth: int = 100) -> str | None:
     return None
 
 
+def yaml_values_equal(actual: Any, expected: Any) -> bool:
+    """Compare validated YAML trees without Python's cross-type coercions."""
+    pending = [(actual, expected)]
+    while pending:
+        left, right = pending.pop()
+        if type(left) is not type(right):
+            return False
+        if isinstance(left, list):
+            if len(left) != len(right):
+                return False
+            pending.extend(zip(left, right, strict=True))
+        elif isinstance(left, dict):
+            if left.keys() != right.keys():
+                return False
+            pending.extend((value, right[key])
+                           for key, value in left.items())
+        elif left != right:
+            return False
+    return True
+
+
 def _validate_one(index: int, raw: Any) -> tuple[Claim | None, list[ParseError]]:
     errors: list[ParseError] = []
 

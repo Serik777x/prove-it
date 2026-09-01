@@ -47,7 +47,7 @@ from typing import Callable
 import yaml
 
 from .grammar import ALLOWED_STAGES, DEFAULT_STAGE, STAGE_PUSHED, STAGE_WORKTREE
-from .parse import Claim, yaml_tree_error
+from .parse import Claim, yaml_tree_error, yaml_values_equal
 
 GIT_TIMEOUT = 30
 EVIDENCE_LIMIT = 500
@@ -865,7 +865,7 @@ def check_frontmatter_equals(claim: Claim) -> Verdict:
                        f"comparison-safe {res.where}: {actual_problem}", detail)
     detail["actual"] = actual
     try:
-        equal = actual == expected
+        equal = yaml_values_equal(actual, expected)
     except (RecursionError, TypeError, ValueError) as exc:
         detail["comparison_error"] = str(exc)
         return Verdict(False,

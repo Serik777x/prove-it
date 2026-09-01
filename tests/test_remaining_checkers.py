@@ -80,6 +80,25 @@ class TestFrontmatterEquals:
         assert "actual" not in verdict.detail
         assert "actual_error" in verdict.detail
 
+    @pytest.mark.parametrize("body,key,expected", [
+        ("flag: true", "flag", "1"),
+        ("count: 1", "count", "1.0"),
+        ("nested: [true, {count: 1}]", "nested", "[1, {count: 1.0}]"),
+    ])
+    def test_yaml_equality_preserves_scalar_types(
+            self, landed_repo, body, key, expected):
+        (landed_repo / "typed.md").write_text(
+            f"---\n{body}\n---\nbody\n", encoding="utf-8")
+        git(landed_repo, "add", "typed.md")
+        git(landed_repo, "commit", "-m", "typed frontmatter")
+        git(landed_repo, "push")
+
+        verdict = run("- type: frontmatter_equals\n  path: typed.md\n"
+                      f"  key: {key}\n  value: {expected}\n")
+
+        assert not verdict.ok
+        assert "claimed" in verdict.evidence
+
 
 class TestGlobCount:
     def test_untracked_match_does_not_satisfy_pushed_default(self, landed_repo):

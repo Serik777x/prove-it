@@ -176,6 +176,8 @@ recursion limits are contained at the YAML load boundary with the same exit-2
 contract. The same validation is applied to the observed frontmatter value
 before equality, so recursive or parser-too-deep frontmatter produces an
 evidence-bearing failure, never a traceback or recursive JSON document.
+Equality is recursive and type-strict: YAML boolean `true` is not integer `1`,
+and integer `1` is not floating-point `1.0`, including inside lists and maps.
 
 `path_moved` deliberately checks both ends **and** provenance. A copy that
 left the source in place is not a move, but neither is a deletion beside an
