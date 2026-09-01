@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "prove-it"
+version = "0.1.0"
+description = "Hold completion claims against real state before believing them."
+requires-python = ">=3.14"
+dependencies = ["PyYAML>=6.0"]
+
+[project.scripts]
+prove-it = "proveit.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

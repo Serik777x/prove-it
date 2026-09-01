@@ -18,6 +18,7 @@ statements against actual disk and git.
 
 ```
 $ prove-it verify claims.yaml
+$ prove-it verify claims.yaml --json
 ```
 
 Exit `0` every claim proved, `1` a claim failed, `2` the claims file was
@@ -53,13 +54,15 @@ vault-house `20_projects/20.71-prove-it/` for purpose and decisions.
 
 ## Status
 
-Early. M001 (grammar + parser) and M002 (all ten checkers) are complete and
-tested. All six filesystem checkers resolve through the DEC-002 pushed-state
-layer; the process and Git checkers return evidence rather than booleans.
-M003 is the runner and CLI.
+M001 (grammar + parser), M002 (all ten checkers), and M003 (runner + CLI) are
+complete and tested. All six filesystem checkers resolve through the DEC-002
+pushed-state layer; the process and Git checkers return evidence rather than
+booleans. The CLI emits human evidence or one JSON document and preserves the
+0/1/2 success/failure/malformed contract.
 
 ## Develop
 
 ```
+python -m pip install -e .
 python -m pytest tests/ -q
 ```

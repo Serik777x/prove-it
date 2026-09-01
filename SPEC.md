@@ -110,6 +110,19 @@ ancestry against the remote ref does.
 
 ## Design notes
 
+## Runner and CLI
+
+`prove-it verify FILE` (or `python -m proveit verify FILE`) parses the whole
+claims file before running anything. Parse/read failures exit 2, a disproved
+claim exits 1, and all claims proved exits 0. Human output carries one evidence
+line per claim; `--json` emits one document with the same exit code and the
+checker detail objects intact. A missing checker is a hard failed verdict even
+though the grammar/checker equality test should make it unreachable.
+
+`FILE` may be `-` to read claims from standard input.
+
+## Claim details
+
 `text` in `file_contains` is a **literal substring**, not a regex. A
 claim is supposed to be trivially checkable by a human reading it; a
 regex is a second thing to get wrong.
