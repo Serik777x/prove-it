@@ -171,10 +171,11 @@ Omitted means "at least one".
 
 `frontmatter_equals.value` is a finite YAML data tree: scalar values, lists,
 and string-keyed mappings are supported. Recursive aliases, unsupported YAML
-container types, and excessive nesting are refused as parse errors. The same
-validation is applied to the observed frontmatter value before equality, so a
-malformed recursive value produces an evidence-bearing failure, never a
-traceback or recursive JSON document.
+container types, and excessive nesting are refused as parse errors. Parser-level
+recursion limits are contained at the YAML load boundary with the same exit-2
+contract. The same validation is applied to the observed frontmatter value
+before equality, so recursive or parser-too-deep frontmatter produces an
+evidence-bearing failure, never a traceback or recursive JSON document.
 
 `path_moved` deliberately checks both ends **and** provenance. A copy that
 left the source in place is not a move, but neither is a deletion beside an
@@ -206,6 +207,7 @@ frontmatter edit, or glob match.
 
 If no enclosing lexical repository exists, a claimed non-symlink directory may
 itself establish the repository root and resolves as relative path `""` at the
-pushed commit. An enclosing lexical repository always wins over a nested Git
-repository at the claimed path. A claimed final directory symlink remains a
-lexical symlink unless it is explicitly the container of a glob claim.
+pushed commit. The outermost enclosing lexical repository always wins over a
+nested Git repository at the claimed path or anywhere along its descendants.
+A claimed final directory symlink remains a lexical symlink unless it is
+explicitly the container of a glob claim.

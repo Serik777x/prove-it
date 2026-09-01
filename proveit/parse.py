@@ -172,6 +172,8 @@ def parse_claims(text: str) -> tuple[list[Claim], list[ParseError]]:
         doc = yaml.safe_load(text)
     except yaml.YAMLError as exc:
         return [], [ParseError(f"not valid YAML: {exc}")]
+    except RecursionError:
+        return [], [ParseError("YAML nesting exceeds the parser limit")]
 
     if doc is None:
         return [], [ParseError("claims file is empty")]

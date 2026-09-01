@@ -164,6 +164,51 @@ def test_recursive_frontmatter_emits_verdict_without_traceback(
         assert "recursive YAML alias" in proc.stdout
 
 
+@pytest.mark.parametrize("json_mode", [False, True])
+def test_deep_claim_yaml_is_contained_as_exit_2(tmp_path, json_mode):
+    nested = "[" * 1000 + "0" + "]" * 1000
+    extra = ("--json",) if json_mode else ()
+    proc = invoke(
+        tmp_path,
+        "- type: frontmatter_equals\n  path: note.md\n"
+        f"  key: deep\n  value: {nested}\n",
+        *extra,
+    )
+
+    assert proc.returncode == 2
+    assert "Traceback" not in proc.stderr
+    if json_mode:
+        payload = json.loads(proc.stdout)
+        assert payload["exit_code"] == 2
+        assert "nesting" in payload["errors"][0].lower()
+    else:
+        assert "nesting" in proc.stderr.lower()
+
+
+@pytest.mark.parametrize("json_mode", [False, True])
+def test_deep_observed_frontmatter_is_a_failed_verdict(tmp_path, json_mode):
+    nested = "[" * 1000 + "0" + "]" * 1000
+    (tmp_path / "deep.md").write_text(
+        f"---\ndeep: {nested}\n---\nbody\n", encoding="utf-8")
+    extra = ("--json",) if json_mode else ()
+    proc = invoke(
+        tmp_path,
+        "- type: frontmatter_equals\n  path: deep.md\n"
+        "  key: deep\n  value: 0\n  stage: worktree\n",
+        *extra,
+    )
+
+    assert proc.returncode == 1
+    assert "Traceback" not in proc.stderr
+    if json_mode:
+        payload = json.loads(proc.stdout)
+        assert payload["claims"][0]["status"] == "FAIL"
+        assert "nesting" in payload["claims"][0]["evidence"].lower()
+    else:
+        assert "FAIL frontmatter_equals" in proc.stdout
+        assert "nesting" in proc.stdout.lower()
+
+
 def test_unreadable_claims_path_is_exit_2(tmp_path):
     env = dict(os.environ)
     env["PYTHONPATH"] = str(os.path.dirname(os.path.dirname(__file__)))

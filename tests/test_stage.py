@@ -147,6 +147,17 @@ class TestRepositoryRootResolution:
             verdict.evidence
         assert "origin/main" in verdict.evidence
 
+    def test_unlanded_nested_repository_descendant_uses_outer_repo(self, repo):
+        self._landed_inner(repo)
+
+        verdict = run("- type: file_contains\n  path: vendor/inner.txt\n"
+                      "  text: inner\n")
+
+        assert not verdict.ok
+        assert verdict.detail["stage"] == "pushed"
+        assert "present in the working tree but NOT at that commit" in \
+            verdict.evidence
+
     def test_pushed_gitlink_is_not_inner_repository_directory(self, repo):
         self._landed_inner(repo)
         git(repo, "add", "vendor")
@@ -160,6 +171,20 @@ class TestRepositoryRootResolution:
         assert verdict.detail["kind"] == "special", verdict.evidence
         assert verdict.detail["special_type"] == "gitlink"
         assert "claimed dir" in verdict.evidence
+
+    def test_pushed_gitlink_descendant_does_not_use_inner_remote(self, repo):
+        self._landed_inner(repo)
+        git(repo, "add", "vendor")
+        git(repo, "commit", "-m", "land gitlink")
+        git(repo, "push")
+
+        verdict = run("- type: file_contains\n  path: vendor/inner.txt\n"
+                      "  text: inner\n")
+
+        assert not verdict.ok
+        assert verdict.detail["stage"] == "pushed"
+        assert "does not exist" in verdict.evidence
+        assert "origin/main" in verdict.evidence
 
 
 class TestTheLyingReceipt:

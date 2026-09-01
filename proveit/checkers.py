@@ -227,6 +227,7 @@ def _repo_location(path: Path, *, follow_final_dir: bool = False
     start = (absolute if follow_final_dir and absolute.is_dir()
              and not absolute.is_symlink()
              else absolute.parent)
+    lexical_locations: dict[str, _RepoLocation] = {}
     for candidate in (start, *start.parents):
         if not candidate.is_dir() or candidate.is_symlink():
             continue
@@ -239,7 +240,12 @@ def _repo_location(path: Path, *, follow_final_dir: bool = False
             rel = "" if rel == "." else rel
         except ValueError:
             continue
-        return _RepoLocation(root_path, rel)
+        key = os.path.normcase(os.path.abspath(root_path))
+        lexical_locations[key] = _RepoLocation(root_path, rel)
+
+    if lexical_locations:
+        return min(lexical_locations.values(),
+                   key=lambda location: len(location.root.parts))
 
     if (not follow_final_dir and absolute.is_dir()
             and not absolute.is_symlink()):
@@ -839,6 +845,10 @@ def check_frontmatter_equals(claim: Claim) -> Verdict:
         return Verdict(False,
                        f"{path} has invalid YAML frontmatter {res.where}: {exc}",
                        detail)
+    except RecursionError:
+        return Verdict(False,
+                       f"{path} frontmatter exceeds the YAML parser nesting "
+                       f"limit {res.where}", detail)
     if not isinstance(frontmatter, dict):
         return Verdict(False,
                        f"{path} frontmatter is not a mapping {res.where}", detail)
