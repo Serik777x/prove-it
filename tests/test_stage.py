@@ -206,9 +206,29 @@ class TestOtherCheckersHonourTheStage:
         v = run(claim)
         assert not v.ok
         assert "still present" in v.evidence
+        worktree = run(claim + "  stage: worktree\n")
+        assert worktree.ok and "provenance: Git rename" in worktree.evidence
 
         git(repo, "push")
         assert run(claim).ok
+
+    def test_deletion_beside_preexisting_destination_is_not_a_move(self, repo):
+        (repo / "destination.txt").write_text(
+            "unrelated destination\n", encoding="utf-8")
+        git(repo, "add", "destination.txt")
+        git(repo, "commit", "-m", "preexisting destination")
+        git(repo, "push")
+        (repo / "landed.txt").unlink()
+        git(repo, "add", "landed.txt")
+        git(repo, "commit", "-m", "delete source only")
+        git(repo, "push")
+
+        verdict = run("- type: path_moved\n"
+                      "  src: landed.txt\n"
+                      "  dst: destination.txt\n")
+
+        assert not verdict.ok
+        assert "Git records no rename" in verdict.evidence
 
     def test_a_directory_resolves_at_the_pushed_stage(self, repo):
         (repo / "pkg").mkdir()

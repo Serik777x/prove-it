@@ -1,5 +1,7 @@
 """M002 -- checkers must fail loudly and say what they actually saw."""
 
+import os
+
 import pytest
 
 from proveit.checkers import CHECKERS
@@ -54,10 +56,10 @@ class TestPathAbsent:
 
 
 class TestPathMoved:
-    def test_passes_on_a_real_move(self, repo):
+    def test_endpoints_alone_do_not_prove_a_move(self, repo):
         (repo / "b.txt").write_text("x")
         v = run("- type: path_moved\n  src: a.txt\n  dst: b.txt\n")
-        assert v.ok
+        assert not v.ok and "cannot prove a move" in v.evidence
 
     def test_copy_is_not_a_move(self, repo):
         (repo / "a.txt").write_text("x")
@@ -73,6 +75,33 @@ class TestPathMoved:
         (repo / "a.txt").write_text("x")
         v = run("- type: path_moved\n  src: a.txt\n  dst: b.txt\n")
         assert not v.ok and "still present" in v.evidence
+
+
+class TestDanglingSymlinkIsPresent:
+    @pytest.fixture
+    def dangling(self, repo):
+        link = repo / "dangling-link"
+        try:
+            os.symlink("missing-target", link)
+        except (OSError, NotImplementedError) as exc:
+            pytest.skip(f"symlinks unavailable on this host: {exc}")
+        return link
+
+    def test_path_exists_reports_the_lexical_entry(self, dangling):
+        verdict = run("- type: path_exists\n  path: dangling-link\n")
+        assert verdict.ok
+        assert verdict.detail["kind"] == "symlink"
+        assert verdict.detail["link_target"] == "missing-target"
+
+    def test_path_absent_cannot_pass_for_a_dangling_link(self, dangling):
+        verdict = run("- type: path_absent\n  path: dangling-link\n")
+        assert not verdict.ok and "still present" in verdict.evidence
+        assert "symlink" in verdict.evidence
+
+    def test_dangling_destination_cannot_fake_a_move(self, dangling):
+        verdict = run("- type: path_moved\n  src: old-name\n"
+                      "  dst: dangling-link\n")
+        assert not verdict.ok and "without one Git history" in verdict.evidence
 
 
 class TestFileContains:

@@ -22,7 +22,7 @@ and `id` (the caller's own handle, echoed in output).
 |---|---|---|---|
 | `path_exists` | `path` | `kind` (`any`\|`file`\|`dir`), `stage` | a path is present |
 | `path_absent` | `path` | `stage` | a path is NOT present |
-| `path_moved` | `src`, `dst` | `stage` | src is gone and dst is present -- a move, not a copy |
+| `path_moved` | `src`, `dst` | `stage` | src is gone, dst is present, and Git records that rename |
 | `file_contains` | `path`, `text` | `count`, `stage` | a file exists and contains a literal string |
 | `frontmatter_equals` | `path`, `key`, `value` | `stage` | a markdown file's YAML frontmatter field equals a value |
 | `glob_count` | `pattern`, `count` | `root`, `stage` | a glob matches exactly N paths |
@@ -143,6 +143,13 @@ regex is a second thing to get wrong.
 `count` on `file_contains` is an exact occurrence count when present.
 Omitted means "at least one".
 
-`path_moved` deliberately checks both ends. A copy that left the source
-in place is a different outcome from a move, and an agent that claims a
-move should be held to one.
+`path_moved` deliberately checks both ends **and** provenance. A copy that
+left the source in place is not a move, but neither is a deletion beside an
+unrelated pre-existing destination. Pushed claims require a matching Git
+rename in history; worktree claims accept a matching uncommitted Git rename
+or one recorded at HEAD. Outside one repository, endpoint state cannot prove
+the transition, so the checker fails loudly instead of guessing.
+
+Worktree existence is lexical: a dangling symlink is still a present
+directory entry. It is reported as a symlink with its target and can never
+satisfy `path_absent` merely because that target is missing.

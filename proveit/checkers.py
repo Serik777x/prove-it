@@ -81,10 +81,12 @@ class Resolution:
     stage: str
     where: str                      # evidence fragment, always rendered
     exists: bool
-    kind: str | None = None         # file | dir | None (unknown)
+    kind: str | None = None         # file | dir | symlink | None (unknown)
     content: bytes | None = None    # only when content=True was asked for
     size: int | None = None         # bytes, for a file
     entries: int | None = None      # child count, for a directory
+    link_target: str | None = None  # lexical target when kind == symlink
+    revision: str | None = None     # exact git commit for pushed observations
     error: str | None = None        # unresolvable -- fail loudly
     read_error: str | None = None   # it exists but could not be read
 
@@ -102,17 +104,24 @@ class Resolution:
             if self.size is None:
                 return "file"
             return f"file, {self.size} bytes"
+        if self.kind == "symlink":
+            return f"symlink -> {self.link_target!r}"
         if self.read_error:
             return f"unreadable ({self.read_error})"
         return "missing"
 
     def as_detail(self) -> dict:
-        return {
+        detail = {
             "requested_stage": self.requested,
             "stage": self.stage,
             "exists": self.exists,
             "kind": self.kind,
         }
+        if self.link_target is not None:
+            detail["link_target"] = self.link_target
+        if self.revision is not None:
+            detail["revision"] = self.revision
+        return detail
 
 
 def _git(cwd, *args) -> tuple[int, bytes, str]:
@@ -229,8 +238,18 @@ def _resolve_worktree(path: Path, requested: str, where: str,
         return Resolution(requested=requested, stage=STAGE_WORKTREE,
                           where=where, **kw)
 
-    if not path.exists():
+    if not os.path.lexists(path):
         return make(exists=False)
+    if path.is_symlink():
+        try:
+            target = os.readlink(path)
+            size = path.lstat().st_size
+        except OSError as exc:
+            return make(exists=True, kind="symlink",
+                        read_error=exc.strerror or str(exc))
+        content = target.encode("utf-8") if want_content else None
+        return make(exists=True, kind="symlink", size=size,
+                    link_target=target, content=content)
     if path.is_dir():
         try:
             entries = sum(1 for _ in path.iterdir())
@@ -260,7 +279,7 @@ def _resolve_pushed(root: Path, sha: str, upstream: str, rel: str,
 
     def make(**kw):
         return Resolution(requested=STAGE_PUSHED, stage=STAGE_PUSHED,
-                          where=where, **kw)
+                          where=where, revision=sha, **kw)
 
     code, kind, _ = _git_text(root, "cat-file", "-t", spec)
     if code != 0:
@@ -392,6 +411,59 @@ def check_path_absent(claim: Claim) -> Verdict:
     return Verdict(True, f"{path} absent {res.where}", detail)
 
 
+def _rename_entries(raw: bytes) -> list[tuple[str, str, str]]:
+    """Parse ``git --name-status -z`` rename records."""
+    fields = [field for field in raw.split(b"\0") if field]
+    entries: list[tuple[str, str, str]] = []
+    index = 0
+    while index < len(fields):
+        status = fields[index].decode("utf-8", "replace").lstrip("\n")
+        index += 1
+        if status.startswith("R") and index + 1 < len(fields):
+            old = fields[index].decode("utf-8", "replace")
+            new = fields[index + 1].decode("utf-8", "replace")
+            entries.append((status, old, new))
+            index += 2
+        else:
+            index += 1
+    return entries
+
+
+def _history_proves_rename(root: Path, revision: str, src: str,
+                           dst: str) -> tuple[bool, str | None]:
+    """Find an actual Git rename from ``src`` to ``dst`` in history."""
+    code, commits, err = _git_text(
+        root, "rev-list", revision, "--", src, dst)
+    if code != 0:
+        return False, err or f"could not walk history at {revision[:12]}"
+    for commit in commits.splitlines():
+        code, raw, err = _git(
+            root, "diff-tree", "--root", "--no-commit-id",
+            "--name-status", "-r", "-M", "-z", commit)
+        if code != 0:
+            return False, err or f"could not inspect commit {commit[:12]}"
+        if any(old == src and new == dst
+               for _, old, new in _rename_entries(raw)):
+            return True, f"Git rename in commit {commit[:12]}"
+    return False, None
+
+
+def _worktree_proves_rename(root: Path, src: str,
+                            dst: str) -> tuple[bool, str | None]:
+    """Prove an uncommitted or committed rename visible at HEAD."""
+    code, head, err = _git_text(root, "rev-parse", "--verify", "HEAD")
+    if code != 0:
+        return False, err or "repository has no HEAD"
+    code, raw, err = _git(
+        root, "diff", "--name-status", "-M", "-z", "HEAD")
+    if code != 0:
+        return False, err or "could not inspect working-tree changes"
+    if any(old == src and new == dst
+           for _, old, new in _rename_entries(raw)):
+        return True, "Git rename in the working tree"
+    return _history_proves_rename(root, head, src, dst)
+
+
 def check_path_moved(claim: Claim) -> Verdict:
     stage = _stage_of(claim)
     src, dst = Path(claim["src"]), Path(claim["dst"])
@@ -403,8 +475,8 @@ def check_path_moved(claim: Claim) -> Verdict:
     if dst_res.error:
         return _unresolvable(str(dst), dst_res)
 
-    src_root = _repo_root(src) if stage == STAGE_PUSHED else None
-    dst_root = _repo_root(dst) if stage == STAGE_PUSHED else None
+    src_root = _repo_root(src)
+    dst_root = _repo_root(dst)
     same_observation = (src_res.stage == dst_res.stage
                         and src_res.where == dst_res.where
                         and src_root == dst_root)
@@ -417,12 +489,11 @@ def check_path_moved(claim: Claim) -> Verdict:
               "src_repo": str(src_root) if src_root else None,
               "dst_repo": str(dst_root) if dst_root else None}
 
-    if stage == STAGE_PUSHED and not same_observation:
+    if not same_observation:
         return Verdict(
             False,
-            f"cannot prove one pushed move across different observations -- "
-            f"{provenance}; use stage: worktree to assert a local "
-            "cross-boundary move on purpose",
+            f"cannot prove one move across different observations -- "
+            f"{provenance}",
             detail,
         )
 
@@ -441,8 +512,45 @@ def check_path_moved(claim: Claim) -> Verdict:
                        f"{src} is gone but {dst} was never created {where} "
                        f"-- this is a deletion, not a move", detail)
 
-    return Verdict(True, f"{src} -> {dst} ({dst_res.describe()}) {where}",
-                   detail)
+    if src_root is None or dst_root is None or src_root != dst_root:
+        detail["move_provenance"] = None
+        return Verdict(
+            False,
+            f"{src} is gone and {dst} exists {where}, but endpoint state "
+            "cannot prove a move without one Git history",
+            detail,
+        )
+
+    try:
+        src_rel = _lexical_absolute(src).relative_to(src_root).as_posix()
+        dst_rel = _lexical_absolute(dst).relative_to(src_root).as_posix()
+    except ValueError:
+        detail["move_provenance"] = None
+        return Verdict(False, f"cannot express both move endpoints inside "
+                       f"repository {src_root}", detail)
+
+    if src_res.stage == STAGE_PUSHED:
+        revision = src_res.revision
+        if not revision:
+            proved, proof = False, "pushed observation had no fixed revision"
+        else:
+            proved, proof = _history_proves_rename(
+                src_root, revision, src_rel, dst_rel)
+    else:
+        proved, proof = _worktree_proves_rename(
+            src_root, src_rel, dst_rel)
+    detail["move_provenance"] = proof
+    if not proved:
+        reason = f": {proof}" if proof else ""
+        return Verdict(
+            False,
+            f"{src} is gone and {dst} exists {where}, but Git records no "
+            f"rename from {src_rel} to {dst_rel}{reason}",
+            detail,
+        )
+
+    return Verdict(True, f"{src} -> {dst} ({dst_res.describe()}) {where}; "
+                   f"provenance: {proof}", detail)
 
 
 def check_file_contains(claim: Claim) -> Verdict:
