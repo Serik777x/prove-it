@@ -203,6 +203,15 @@ Worktree absence and glob counts distinguish a missing entry from an
 inspection failure. Permission and enumeration errors are unresolvable failed
 verdicts; they can never satisfy `path_absent` or a zero-count glob.
 
+A glob claim is validated before either stage is consulted. The pattern must
+be relative, non-empty, and confined to its root (no `..` segment), and the
+root must resolve to a directory at the stage actually used. A pattern or root
+that fails those checks is an unresolvable failed verdict at both stages; the
+pushed branch cannot pass a `count: 0` claim by filtering a listing it never
+validly searched. A root that is missing at the claimed stage is a stated
+zero: nothing is counted and the evidence says the root does not exist there,
+so a vacuous zero stays visible instead of reading as a search.
+
 Worktree existence is lexical: a dangling symlink is still a present
 directory entry. It is reported as a symlink with its target and can never
 satisfy `path_absent` merely because that target is missing.

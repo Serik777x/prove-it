@@ -880,19 +880,44 @@ def check_frontmatter_equals(claim: Claim) -> Verdict:
                    f"{res.where}", detail)
 
 
-def _worktree_glob(root: Path, pattern: str, requested: str,
-                   where: str) -> tuple[list[str], str, str | None]:
+def _pattern_error(pattern: str) -> str | None:
+    """Why a glob pattern can never be searched, or None when it can be.
+
+    Validated ONCE, before either stage branch. A pattern that cannot match
+    any root-relative POSIX path -- absolute, empty, or escaping its root --
+    would otherwise filter every listing down to nothing and hand a
+    `count: 0` claim a green verdict without any valid search having run
+    (review 20.71.91.030, finding 1).
+    """
+    if not pattern or not pattern.strip():
+        return "glob pattern must not be empty"
     if (Path(pattern).is_absolute() or PurePosixPath(pattern).is_absolute()
             or PureWindowsPath(pattern).is_absolute()):
-        return [], where, f"glob pattern must be relative, got {pattern!r}"
+        return f"glob pattern must be relative, got {pattern!r}"
+    if (".." in PurePosixPath(pattern).parts
+            or ".." in PureWindowsPath(pattern).parts):
+        return f"glob pattern must stay under its root, got {pattern!r}"
+    try:
+        PurePosixPath("probe").full_match(pattern)
+    except (ValueError, NotImplementedError, re.error) as exc:
+        return f"invalid glob pattern {pattern!r}: {exc}"
+    return None
+
+
+def _worktree_glob(root: Path, pattern: str, requested: str,
+                   where: str) -> tuple[list[str], str, str | None]:
+    """Search the working tree. The caller has already validated `pattern`."""
     try:
         root_stat = root.stat()
     except FileNotFoundError:
-        return [], where, None
+        return [], f"{where}; root {root} does not exist", None
     except OSError as exc:
         return [], where, f"cannot inspect glob root: {exc}"
     if not stat.S_ISDIR(root_stat.st_mode):
-        return [], where, f"glob root is not a directory: {root}"
+        what = ("file" if stat.S_ISREG(root_stat.st_mode)
+                else _special_type(root_stat.st_mode))
+        return [], where, (f"glob root is not a directory {where}: "
+                           f"{root} is a {what}")
 
     matches: list[str] = []
 
@@ -914,9 +939,18 @@ def _worktree_glob(root: Path, pattern: str, requested: str,
 
 def _glob_at(root: Path, pattern: str, stage: str) -> tuple[list[str], str, str,
                                                             str | None]:
-    """Resolve a glob at pushed or working-tree state."""
+    """Resolve a glob at pushed or working-tree state.
+
+    Both branches share one contract: the pattern is validated once, up
+    front, and the root must be a directory at the stage actually used. A
+    root that is MISSING at that stage is a stated zero -- the listing is
+    empty and the evidence says why -- never a silent one.
+    """
     if stage not in ALLOWED_STAGES:
         return [], stage, "", f"unknown stage {stage!r}"
+    pattern_error = _pattern_error(pattern)
+    if pattern_error:
+        return [], stage, "", pattern_error
     if stage == STAGE_WORKTREE:
         matches, where, error = _worktree_glob(
             root, pattern, stage, "in the working tree")
@@ -926,27 +960,38 @@ def _glob_at(root: Path, pattern: str, stage: str) -> tuple[list[str], str, str,
     if location is None:
         where = ("in the working tree (no enclosing git repo -- fell back "
                  "from pushed)")
-        matches, _, error = _worktree_glob(root, pattern, stage, where)
+        matches, where, error = _worktree_glob(root, pattern, stage, where)
         return matches, STAGE_WORKTREE, where, error
     repo = location.root
     sha, upstream_or_reason, behind = _landed_commit(repo)
     if sha is None:
         return [], stage, "", f"cannot resolve pushed state -- {upstream_or_reason}"
     prefix = location.rel
+    res = _resolve_pushed(repo, sha, upstream_or_reason, prefix, False, behind)
+    where = res.where
+    if res.error:
+        return [], stage, where, f"cannot inspect glob root {where}: {res.error}"
+    if res.exists and res.kind != "dir":
+        return [], stage, where, (f"glob root is not a directory {where}: "
+                                  f"{root} is a {res.describe()}")
+    if not res.exists:
+        return [], stage, (f"{where}; root {root} does not exist at that "
+                           f"commit ({_missing_hint(root, res)})"), None
     code, listing, err = _git_text(
         repo, "ls-tree", "-r", "-t", "--name-only", sha)
     if code != 0:
-        return [], stage, "", err or "git could not list pushed tree"
+        return [], stage, where, err or "git could not list pushed tree"
     matches = []
     prefix_with_slash = f"{prefix}/" if prefix else ""
-    for item in listing.splitlines():
-        if prefix_with_slash and not item.startswith(prefix_with_slash):
-            continue
-        rel = item[len(prefix_with_slash):]
-        if rel and PurePosixPath(rel).full_match(pattern):
-            matches.append(rel)
-    where = f"at pushed commit {sha[:7]} ({upstream_or_reason}"
-    where += "; this clone is BEHIND it -- run git fetch/pull)" if behind else ")"
+    try:
+        for item in listing.splitlines():
+            if prefix_with_slash and not item.startswith(prefix_with_slash):
+                continue
+            rel = item[len(prefix_with_slash):]
+            if rel and PurePosixPath(rel).full_match(pattern):
+                matches.append(rel)
+    except (ValueError, NotImplementedError, re.error) as exc:
+        return [], stage, where, f"cannot match glob pattern: {exc}"
     return sorted(set(matches)), stage, where, None
 
 
@@ -959,7 +1004,8 @@ def check_glob_count(claim: Claim) -> Verdict:
               "matches": matches, "requested_stage": _stage_of(claim),
               "stage": actual_stage}
     if error:
-        return Verdict(False, f"glob {pattern!r}: {error}", detail)
+        return Verdict(False, f"glob {pattern!r}: {error}",
+                       {**detail, "error": error})
     if len(matches) != expected:
         return Verdict(False,
                        f"glob {pattern!r} under {root} matched {len(matches)} "

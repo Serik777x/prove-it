@@ -192,6 +192,57 @@ class TestGlobCount:
         assert "cannot enumerate glob root" in verdict.evidence
 
 
+    @pytest.mark.parametrize("pattern,fragment", [
+        ("/tmp/*", "must be relative"),
+        ("C:/tmp/*", "must be relative"),
+        ("../*", "must stay under its root"),
+        ("docs/../*", "must stay under its root"),
+    ])
+    def test_invalid_pattern_is_not_proven_zero_at_pushed_default(
+            self, landed_repo, pattern, fragment):
+        # review 20.71.91.030 finding 1: the pushed branch used to filter the
+        # tree down to nothing and pass `count: 0` without a valid search.
+        verdict = run("- type: glob_count\n  root: .\n"
+                      f"  pattern: {pattern!r}\n  count: 0\n")
+        assert not verdict.ok
+        assert fragment in verdict.evidence
+        assert verdict.detail["stage"] == "pushed"
+        assert verdict.detail["error"]
+
+    def test_file_root_is_not_proven_zero_at_pushed_default(self, landed_repo):
+        verdict = run("- type: glob_count\n  root: note.md\n"
+                      "  pattern: '*'\n  count: 0\n")
+        assert not verdict.ok
+        assert "glob root is not a directory" in verdict.evidence
+        assert "note.md is a file" in verdict.evidence
+        assert "at pushed commit" in verdict.evidence
+        assert verdict.detail["stage"] == "pushed"
+
+    def test_file_root_is_not_proven_zero_in_worktree(self, landed_repo):
+        verdict = run("- type: glob_count\n  root: note.md\n"
+                      "  pattern: '*'\n  count: 0\n  stage: worktree\n")
+        assert not verdict.ok
+        assert "glob root is not a directory" in verdict.evidence
+        assert "note.md is a file" in verdict.evidence
+
+    def test_unlanded_root_counts_zero_but_says_so(self, landed_repo):
+        # A missing root is a stated zero, not an inspection failure (SPEC,
+        # "Worktree absence and glob counts"). The verdict must name the
+        # absence so the zero stays visible instead of reading as a search.
+        ghost = landed_repo / "ghost-dir"
+        ghost.mkdir()
+        (ghost / "unlanded.md").write_text("never pushed\n", encoding="utf-8")
+        verdict = run("- type: glob_count\n  root: ghost-dir\n"
+                      "  pattern: '*.md'\n  count: 0\n")
+        assert verdict.ok, verdict.evidence
+        assert verdict.detail["stage"] == "pushed"
+        assert "root ghost-dir does not exist at that commit" in verdict.evidence
+        assert "never landed" in verdict.evidence
+        claimed = run("- type: glob_count\n  root: ghost-dir\n"
+                      "  pattern: '*.md'\n  count: 1\n")
+        assert not claimed.ok
+        assert "never landed" in claimed.evidence
+
 class TestCommandExits:
     def test_expected_nonzero_exit_passes_with_evidence(self, tmp_path):
         cmd = f'"{sys.executable}" -c "import sys; sys.exit(3)"'
