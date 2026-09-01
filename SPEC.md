@@ -66,6 +66,8 @@ be mistaken for the tool lying.
 
 The tracking ref is a **local cache**. v1 makes no network calls (a brief
 no-go), so a stale `origin/*` is the reader's `git fetch` to do.
+A local branch configured as an upstream is not a landing: the upstream must
+resolve under `refs/remotes/`, or pushed-state resolution fails loudly.
 
 ### Two degradations, and the difference is the point
 
@@ -153,3 +155,6 @@ the transition, so the checker fails loudly instead of guessing.
 Worktree existence is lexical: a dangling symlink is still a present
 directory entry. It is reported as a symlink with its target and can never
 satisfy `path_absent` merely because that target is missing.
+Pushed resolution reads Git tree mode `120000` the same way, so a committed
+symlink cannot satisfy a false `kind: file` claim merely because Git stores
+its target text in a blob.

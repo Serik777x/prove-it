@@ -311,6 +311,16 @@ class TestPushedSymlinksAreLexical:
         assert landed.ok, landed.evidence
         assert not changed.ok, changed.evidence
 
+        pushed_kind = run("- type: path_exists\n"
+                          "  path: tracked-link.txt\n  kind: file\n")
+        worktree_kind = run("- type: path_exists\n"
+                            "  path: tracked-link.txt\n  kind: file\n"
+                            "  stage: worktree\n")
+        assert not pushed_kind.ok and pushed_kind.detail["kind"] == "symlink"
+        assert pushed_kind.detail["link_target"] == "landed.txt"
+        assert not worktree_kind.ok and worktree_kind.detail["kind"] == "symlink"
+        assert worktree_kind.detail["link_target"] == "other.txt"
+
     @pytest.fixture
     def intermediate_link(self, repo, tmp_path):
         outside = tmp_path / "outside"
@@ -453,6 +463,23 @@ class TestDegradation:
                 "  text: landed content\n")
         assert not v.ok
         assert "no upstream tracking ref" in v.evidence
+
+    def test_a_local_branch_upstream_is_not_pushed_state(self, tmp_path,
+                                                         monkeypatch):
+        work = tmp_path / "local-upstream"
+        _init(work)
+        (work / "a.txt").write_text("hi", encoding="utf-8")
+        git(work, "add", "a.txt")
+        git(work, "commit", "-m", "local only")
+        git(work, "branch", "fake-upstream")
+        git(work, "branch", "--set-upstream-to=fake-upstream", "main")
+        monkeypatch.chdir(work)
+
+        verdict = run("- type: path_exists\n  path: a.txt\n")
+
+        assert not verdict.ok
+        assert "is not a remote-tracking ref" in verdict.evidence
+        assert "stage: worktree" in verdict.evidence
 
     def test_an_empty_repo_refuses_to_guess(self, tmp_path, monkeypatch):
         work = tmp_path / "empty"

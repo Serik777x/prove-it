@@ -216,15 +216,20 @@ def _landed_commit(root: Path) -> tuple[str | None, str, bool]:
     The tracking ref is a LOCAL CACHE. v1 makes no network calls, so a
     stale `origin/*` is the reader's `git fetch` to do.
     """
-    code, upstream, _ = _git_text(
-        root, "rev-parse", "--abbrev-ref", "--symbolic-full-name",
-        "@{upstream}")
-    if code != 0 or not upstream:
+    code, upstream_ref, _ = _git_text(
+        root, "rev-parse", "--symbolic-full-name", "@{upstream}")
+    if code != 0 or not upstream_ref:
         return None, _why_nothing_landed(root), False
-    code, sha, _ = _git_text(root, "merge-base", "HEAD", upstream)
+    remote_prefix = "refs/remotes/"
+    if not upstream_ref.startswith(remote_prefix):
+        return (None,
+                f"upstream {upstream_ref!r} is not a remote-tracking ref",
+                False)
+    upstream = upstream_ref[len(remote_prefix):]
+    code, sha, _ = _git_text(root, "merge-base", "HEAD", upstream_ref)
     if code != 0 or not sha:
         return None, f"HEAD shares no history with {upstream}", False
-    _, tip, _ = _git_text(root, "rev-parse", upstream)
+    _, tip, _ = _git_text(root, "rev-parse", upstream_ref)
     return sha, upstream, bool(tip) and tip != sha
 
 
@@ -289,6 +294,21 @@ def _resolve_pushed(root: Path, sha: str, upstream: str, rel: str,
         code, listing, _ = _git_text(root, "ls-tree", "--name-only", spec)
         entries = len(listing.splitlines()) if code == 0 else None
         return make(exists=True, kind="dir", entries=entries)
+
+    code, entry, _ = _git(root, "ls-tree", "-z", sha, "--", rel)
+    mode = None
+    if code == 0 and entry:
+        header = entry.split(b"\t", 1)[0]
+        mode = header.split(b" ", 1)[0].decode("ascii", "replace")
+    if mode == "120000":
+        code, raw, err = _git(root, "cat-file", "blob", spec)
+        if code != 0:
+            return make(exists=True, kind="symlink",
+                        read_error=err or "git could not read the link blob")
+        target = raw.decode("utf-8", "replace")
+        return make(exists=True, kind="symlink", size=len(raw),
+                    link_target=target,
+                    content=raw if want_content else None)
 
     code, size_text, _ = _git_text(root, "cat-file", "-s", spec)
     size = int(size_text) if code == 0 and size_text.isdigit() else None
