@@ -47,7 +47,7 @@ from typing import Callable
 import yaml
 
 from .grammar import ALLOWED_STAGES, DEFAULT_STAGE, STAGE_PUSHED, STAGE_WORKTREE
-from .parse import Claim, yaml_tree_error, yaml_values_equal
+from .parse import Claim, safe_load_unique, yaml_tree_error, yaml_values_equal
 
 GIT_TIMEOUT = 30
 EVIDENCE_LIMIT = 500
@@ -840,7 +840,7 @@ def check_frontmatter_equals(claim: Claim) -> Verdict:
                        f"{path} has unterminated YAML frontmatter {res.where}",
                        detail)
     try:
-        frontmatter = yaml.safe_load("\n".join(lines[1:end]))
+        frontmatter = safe_load_unique("\n".join(lines[1:end]))
     except yaml.YAMLError as exc:
         return Verdict(False,
                        f"{path} has invalid YAML frontmatter {res.where}: {exc}",
@@ -1066,7 +1066,10 @@ def check_git_clean(claim: Claim) -> Verdict:
     assert root is not None
     include_untracked = claim.get("untracked", False)
     flag = "--untracked-files=all" if include_untracked else "--untracked-files=no"
-    code, output, err = _git_text(root, "status", "--porcelain", flag)
+    submodule_flag = ("--ignore-submodules=none" if include_untracked else
+                      "--ignore-submodules=untracked")
+    code, output, err = _git_text(
+        root, "status", "--porcelain", submodule_flag, flag)
     if code != 0:
         return Verdict(False, f"git status failed in {root}: {err}")
     changes = output.splitlines() if output else []

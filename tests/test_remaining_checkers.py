@@ -99,6 +99,21 @@ class TestFrontmatterEquals:
         assert not verdict.ok
         assert "claimed" in verdict.evidence
 
+    def test_duplicate_frontmatter_key_is_unresolvable(self, landed_repo):
+        (landed_repo / "duplicate.md").write_text(
+            "---\nstatus: draft\nstatus: approved\n---\nbody\n",
+            encoding="utf-8")
+        git(landed_repo, "add", "duplicate.md")
+        git(landed_repo, "commit", "-m", "duplicate frontmatter")
+        git(landed_repo, "push")
+
+        verdict = run("- type: frontmatter_equals\n  path: duplicate.md\n"
+                      "  key: status\n  value: approved\n")
+
+        assert not verdict.ok
+        assert "invalid YAML frontmatter" in verdict.evidence
+        assert "duplicate key 'status'" in verdict.evidence
+
 
 class TestGlobCount:
     def test_untracked_match_does_not_satisfy_pushed_default(self, landed_repo):
@@ -234,6 +249,29 @@ class TestCommandExits:
 
 
 class TestGitCheckers:
+    @staticmethod
+    def _landed_submodule(landed_repo):
+        submodule = landed_repo / "sub"
+        submodule.mkdir()
+        git(submodule, "init", "-b", "main")
+        git(submodule, "config", "user.email", "tests@example.invalid")
+        git(submodule, "config", "user.name", "tests")
+        git(submodule, "config", "commit.gpgsign", "false")
+        (submodule / "tracked.txt").write_text("clean\n", encoding="utf-8")
+        git(submodule, "add", "tracked.txt")
+        git(submodule, "commit", "-m", "submodule source")
+        (landed_repo / ".gitmodules").write_text(
+            "[submodule \"sub\"]\n"
+            "\tpath = sub\n"
+            "\turl = ./sub\n"
+            "\tignore = all\n",
+            encoding="utf-8",
+        )
+        git(landed_repo, "add", ".gitmodules", "sub")
+        git(landed_repo, "commit", "-m", "land ignored submodule")
+        git(landed_repo, "push")
+        return submodule
+
     def test_head_is_accepts_short_sha(self, landed_repo):
         sha = git(landed_repo, "rev-parse", "--short", "HEAD")
         verdict = run("- type: git_head_is\n  repo: .\n"
@@ -256,6 +294,33 @@ class TestGitCheckers:
     def test_clean_fails_on_tracked_change(self, landed_repo):
         (landed_repo / "note.md").write_text("changed\n", encoding="utf-8")
         assert not run("- type: git_clean\n  repo: .\n").ok
+
+    def test_clean_overrides_config_that_hides_dirty_submodule(self, landed_repo):
+        submodule = self._landed_submodule(landed_repo)
+        (submodule / "tracked.txt").write_text("dirty\n", encoding="utf-8")
+
+        verdict = run("- type: git_clean\n  repo: .\n  untracked: true\n")
+
+        assert not verdict.ok
+        assert any("sub" in change for change in verdict.detail["changes"])
+
+    def test_clean_sees_untracked_submodule_content_when_requested(
+            self, landed_repo):
+        submodule = self._landed_submodule(landed_repo)
+        (submodule / "untracked.txt").write_text("dirty\n", encoding="utf-8")
+
+        verdict = run("- type: git_clean\n  repo: .\n  untracked: true\n")
+
+        assert not verdict.ok
+        assert any("sub" in change for change in verdict.detail["changes"])
+
+    def test_clean_can_ignore_untracked_submodule_content(self, landed_repo):
+        submodule = self._landed_submodule(landed_repo)
+        (submodule / "untracked.txt").write_text("dirty\n", encoding="utf-8")
+
+        verdict = run("- type: git_clean\n  repo: .\n")
+
+        assert verdict.ok, verdict.evidence
 
     def test_pushed_tracks_actual_ancestry(self, landed_repo):
         assert run("- type: git_pushed\n  repo: .\n").ok

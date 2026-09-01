@@ -178,6 +178,13 @@ before equality, so recursive or parser-too-deep frontmatter produces an
 evidence-bearing failure, never a traceback or recursive JSON document.
 Equality is recursive and type-strict: YAML boolean `true` is not integer `1`,
 and integer `1` is not floating-point `1.0`, including inside lists and maps.
+Duplicate mapping keys are refused in both claim YAML and observed frontmatter;
+the checker never silently accepts PyYAML's last-key-wins interpretation.
+
+`git_clean` overrides repository submodule-ignore configuration when observing
+status. A dirty or untracked submodule cannot be hidden by `.gitmodules`
+declaring `ignore = all`; the claim's `untracked` field still controls whether
+untracked content is part of the requested cleanliness scope.
 
 `path_moved` deliberately checks both ends **and** provenance. A copy that
 left the source in place is not a move, but neither is a deletion beside an

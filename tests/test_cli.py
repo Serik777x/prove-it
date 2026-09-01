@@ -209,6 +209,25 @@ def test_deep_observed_frontmatter_is_a_failed_verdict(tmp_path, json_mode):
         assert "nesting" in proc.stdout.lower()
 
 
+@pytest.mark.parametrize("json_mode", [False, True])
+def test_duplicate_claim_key_is_exit_2_without_traceback(tmp_path, json_mode):
+    extra = ("--json",) if json_mode else ()
+    proc = invoke(
+        tmp_path,
+        "- type: path_exists\n  path: first.md\n  path: second.md\n",
+        *extra,
+    )
+
+    assert proc.returncode == 2
+    assert "Traceback" not in proc.stderr
+    if json_mode:
+        payload = json.loads(proc.stdout)
+        assert payload["exit_code"] == 2
+        assert "duplicate key 'path'" in payload["errors"][0]
+    else:
+        assert "duplicate key 'path'" in proc.stderr
+
+
 def test_unreadable_claims_path_is_exit_2(tmp_path):
     env = dict(os.environ)
     env["PYTHONPATH"] = str(os.path.dirname(os.path.dirname(__file__)))

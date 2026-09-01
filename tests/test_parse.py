@@ -43,6 +43,13 @@ class TestShape:
         assert len(messages) == 1
         assert messages[0].startswith("not valid YAML")
 
+    def test_duplicate_claim_key_is_rejected(self):
+        messages = errs(
+            "- type: path_exists\n  path: first.md\n  path: second.md\n")
+
+        assert len(messages) == 1
+        assert "duplicate key 'path'" in messages[0]
+
     def test_non_mapping_claim_rejected(self):
         assert "claim must be a mapping, got str" in errs("- just-a-string\n")
 

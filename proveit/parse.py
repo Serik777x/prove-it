@@ -15,6 +15,40 @@ import yaml
 from .grammar import CLAIM_TYPES, KNOWN_TYPES, ClaimType
 
 
+class UniqueKeySafeLoader(yaml.SafeLoader):
+    """SafeLoader that refuses an ambiguous mapping before it reaches checks."""
+
+
+def _construct_unique_mapping(loader, node, deep=False):
+    loader.flatten_mapping(node)
+    mapping = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        try:
+            duplicate = key in mapping
+        except TypeError as exc:
+            raise yaml.constructor.ConstructorError(
+                "while constructing a mapping", node.start_mark,
+                f"found an unhashable mapping key: {exc}", key_node.start_mark,
+            ) from exc
+        if duplicate:
+            raise yaml.constructor.ConstructorError(
+                "while constructing a mapping", node.start_mark,
+                f"found duplicate key {key!r}", key_node.start_mark,
+            )
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+    return mapping
+
+
+UniqueKeySafeLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct_unique_mapping)
+
+
+def safe_load_unique(text: str):
+    """Load trusted YAML types while rejecting duplicate mapping keys."""
+    return yaml.load(text, Loader=UniqueKeySafeLoader)
+
+
 @dataclass(frozen=True)
 class Claim:
     """A single validated assertion, defaults already filled in."""
@@ -190,7 +224,7 @@ def parse_claims(text: str) -> tuple[list[Claim], list[ParseError]]:
     shape is how a malformed file gets silently half-read.
     """
     try:
-        doc = yaml.safe_load(text)
+        doc = safe_load_unique(text)
     except yaml.YAMLError as exc:
         return [], [ParseError(f"not valid YAML: {exc}")]
     except RecursionError:
