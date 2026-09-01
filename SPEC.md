@@ -111,6 +111,10 @@ and cannot be widened by an agent-authored claim. The command string is split
 into argv and executed with `shell=False`; redirection, pipelines and other
 shell syntax are never interpreted. A future closeout adapter must preserve
 that default-deny policy and choose its allowlist on the claimant host.
+Relative allowlist entries are fixed against the caller's directory. A
+relative claim executable is resolved against the claim's execution `cwd`,
+compared as an absolute path, and then executed by that absolute path, so a
+claim cannot redirect an allowed `./name` to a different same-named program.
 
 ## Git
 

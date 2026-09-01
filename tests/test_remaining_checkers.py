@@ -1,5 +1,7 @@
 """M002 completion: frontmatter, glob, process, and Git checkers."""
 
+import os
+import shutil
 import subprocess
 import sys
 
@@ -150,6 +152,32 @@ class TestCommandExits:
         assert result.exit_code == 1
         assert "command policy denied" in result.results[0].verdict.evidence
         assert not target.exists()
+
+    def test_relative_allowlist_cannot_be_redirected_by_claim_cwd(
+            self, tmp_path, monkeypatch):
+        safe = tmp_path / "safe"
+        attack = tmp_path / "attack"
+        safe.mkdir()
+        attack.mkdir()
+        name = "same-name.exe" if os.name == "nt" else "same-name"
+        shutil.copy2(sys.executable, safe / name)
+        shutil.copy2(sys.executable, attack / name)
+        if os.name != "nt":
+            (safe / name).chmod(0o755)
+            (attack / name).chmod(0o755)
+        monkeypatch.chdir(safe)
+        claims = yaml.safe_dump([{
+            "type": "command_exits",
+            "cmd": f"./{name} --version",
+            "cwd": str(attack),
+        }], sort_keys=False)
+
+        result = verify_text(claims, allowed_commands=[f"./{name}"])
+
+        assert result.exit_code == 1
+        verdict = result.results[0].verdict
+        assert "command policy denied" in verdict.evidence
+        assert os.path.normcase(str(attack / name)) == verdict.detail["executable"]
 
 
 class TestGitCheckers:

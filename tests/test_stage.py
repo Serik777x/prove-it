@@ -343,6 +343,16 @@ class TestPushedSymlinksAreLexical:
         assert not worktree_kind.ok and worktree_kind.detail["kind"] == "symlink"
         assert worktree_kind.detail["link_target"] == "other.txt"
 
+        pushed_frontmatter = run(
+            "- type: frontmatter_equals\n"
+            "  path: tracked-link.txt\n  key: status\n  value: any\n")
+        worktree_frontmatter = run(
+            "- type: frontmatter_equals\n"
+            "  path: tracked-link.txt\n  key: status\n  value: any\n"
+            "  stage: worktree\n")
+        assert "symlink -> 'landed.txt'" in pushed_frontmatter.evidence
+        assert "symlink -> 'other.txt'" in worktree_frontmatter.evidence
+
     @pytest.fixture
     def intermediate_link(self, repo, tmp_path):
         outside = tmp_path / "outside"

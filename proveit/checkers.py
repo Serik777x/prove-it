@@ -55,8 +55,16 @@ _ALLOWED_COMMANDS: ContextVar[frozenset[str]] = ContextVar(
     "prove_it_allowed_commands", default=frozenset())
 
 
-def _canonical_executable(value: str) -> str:
-    located = shutil.which(value) or value
+def _canonical_executable(value: str, *, base: Path | None = None) -> str:
+    path = Path(value)
+    has_directory = any(separator and separator in value
+                        for separator in (os.sep, os.altsep))
+    if path.is_absolute():
+        located = path
+    elif has_directory:
+        located = (base or Path.cwd()) / path
+    else:
+        located = Path(shutil.which(value) or ((base or Path.cwd()) / path))
     return os.path.normcase(os.path.abspath(located))
 
 
@@ -767,7 +775,8 @@ def check_frontmatter_equals(claim: Claim) -> Verdict:
     if not res.exists:
         return Verdict(False, f"{path} does not exist {res.where}", detail)
     if res.kind != "file":
-        return Verdict(False, f"{path} is a directory, not a file", detail)
+        return Verdict(False, f"{path} is {res.describe()}, not a regular "
+                       f"file {res.where}", detail)
     if body is None:
         return Verdict(False, f"{path} is not readable UTF-8 text {res.where}",
                        detail)
@@ -897,7 +906,8 @@ def check_command_exits(claim: Claim) -> Verdict:
     if not argv:
         return Verdict(False, "command has no executable", detail)
     detail["argv"] = argv
-    executable = _canonical_executable(argv[0])
+    execution_cwd = Path(os.path.abspath(cwd))
+    executable = _canonical_executable(argv[0], base=execution_cwd)
     allowed = _ALLOWED_COMMANDS.get()
     detail["executable"] = executable
     detail["allowed_commands"] = sorted(allowed)
@@ -908,6 +918,7 @@ def check_command_exits(claim: Claim) -> Verdict:
             "allow it outside the claims file",
             detail,
         )
+    argv[0] = executable
     try:
         proc = subprocess.run(
             argv, cwd=cwd, shell=False, capture_output=True, text=True,
