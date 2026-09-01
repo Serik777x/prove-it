@@ -85,7 +85,12 @@ class TestFileContains:
         (repo / "a.py").write_text("one\ntwo\nthree\n")
         v = run("- type: file_contains\n  path: a.py\n  text: absent\n")
         assert not v.ok
-        assert "text not present" in v.evidence and "4 lines" in v.evidence
+        assert "text not present" in v.evidence and "3 lines" in v.evidence
+
+    def test_empty_file_reports_zero_lines(self, repo):
+        (repo / "empty.txt").write_text("")
+        v = run("- type: file_contains\n  path: empty.txt\n  text: absent\n")
+        assert not v.ok and "0 lines" in v.evidence
 
     def test_exact_count_mismatch_fails(self, repo):
         (repo / "a.py").write_text("xx")

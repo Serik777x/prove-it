@@ -89,6 +89,15 @@ class TestRequiredFields:
         assert errors == []
         assert claims[0].get("note") == "why"
 
+    @pytest.mark.parametrize("body,field", [
+        ("- type: file_contains\n  path: README.md\n  text: ''\n", "text"),
+        ("- type: command_exits\n  cmd: '   '\n", "cmd"),
+    ])
+    def test_required_strings_must_not_be_blank(self, body, field):
+        messages = errs(body)
+        assert any(f"field '{field}' must be a non-empty string" in message
+                   for message in messages)
+
 
 class TestFieldTypes:
     def test_wrong_type_rejected(self):

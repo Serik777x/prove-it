@@ -7,6 +7,7 @@ import pytest
 
 from proveit.checkers import CHECKERS, _repo_root_of_dir
 from proveit.parse import parse_claims
+from proveit.runner import RunResult, verify_text
 
 
 def git(cwd, *args):
@@ -125,6 +126,17 @@ class TestCommandExits:
         verdict = run("- type: command_exits\n"
                       f"  cmd: {cmd!r}\n  code: 0\n  cwd: {str(tmp_path)!r}\n")
         assert not verdict.ok and verdict.detail["actual_code"] == 4
+
+    def test_non_utf8_output_returns_evidence_instead_of_raising(self,
+                                                                  tmp_path):
+        cmd = (f'"{sys.executable}" -c '
+               '"import sys; sys.stdout.buffer.write(bytes([255]))"')
+        result = verify_text(
+            "- type: command_exits\n"
+            f"  cmd: {cmd!r}\n  cwd: {str(tmp_path)!r}\n")
+        assert isinstance(result, RunResult)
+        assert result.exit_code == 0
+        assert "stdout='�'" in result.results[0].verdict.evidence
 
 
 class TestGitCheckers:

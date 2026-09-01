@@ -9,6 +9,10 @@ failure this tool exists to catch.
 A claims file is either a bare YAML list of claims, or a mapping with a
 top-level `claims:` key. No third shape is guessed at.
 
+Every required string must contain at least one non-whitespace character.
+An empty literal search or blank command would otherwise return a false green
+while asserting nothing.
+
 Every claim accepts two universal fields: `note` (free text for a human)
 and `id` (the caller's own handle, echoed in output).
 

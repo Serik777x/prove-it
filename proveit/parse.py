@@ -101,6 +101,9 @@ def _validate_one(index: int, raw: Any) -> tuple[Claim | None, list[ParseError]]
             errors.append(ParseError(
                 f"{name} field {key!r} must be {_type_name(expected)}, "
                 f"got {type(value).__name__}", index))
+        elif key in spec.required and expected is str and not value.strip():
+            errors.append(ParseError(
+                f"{name} field {key!r} must be a non-empty string", index))
 
     if errors:
         return None, errors

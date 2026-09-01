@@ -30,7 +30,7 @@ reverse the example from FAIL to PASS.
 
 ```
 $ prove-it verify examples/e3-false-claim.yaml
-FAIL stable-negative-example -- looked for 'PROVE_IT_E3_SENTINEL_MUST_STAY_ABSENT' in the working tree -- file exists, 2 lines, text not present
+FAIL stable-negative-example -- looked for 'PROVE_IT_E3_SENTINEL_MUST_STAY_ABSENT' in the working tree -- file exists, 1 line, text not present
 ```
 
 ## "Done" means landed

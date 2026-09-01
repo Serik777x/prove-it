@@ -45,7 +45,7 @@ def test_stable_e3_false_claim_is_exit_1_through_installed_console():
     assert proc.returncode == 1
     assert "FAIL stable-negative-example" in proc.stdout
     assert "PROVE_IT_E3_SENTINEL_MUST_STAY_ABSENT" in proc.stdout
-    assert "file exists, 2 lines, text not present" in proc.stdout
+    assert "file exists, 1 line, text not present" in proc.stdout
     assert "in the working tree" in proc.stdout
 
 

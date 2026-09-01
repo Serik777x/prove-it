@@ -437,20 +437,21 @@ def check_file_contains(claim: Claim) -> Verdict:
                        {**detail, "readable": False})
 
     found = body.count(needle)
-    lines = body.count("\n") + 1
+    lines = len(body.splitlines())
+    line_count = f"{lines} {'line' if lines == 1 else 'lines'}"
     detail.update({"found": found, "lines": lines})
 
     if want is not None and found != want:
         return Verdict(False,
                        f"looked for {needle!r} {res.where} -- found {found} "
-                       f"times, claimed {want} ({lines} lines)", detail)
+                       f"times, claimed {want} ({line_count})", detail)
     if found == 0:
         return Verdict(False,
                        f"looked for {needle!r} {res.where} -- file exists, "
-                       f"{lines} lines, text not present", detail)
+                       f"{line_count}, text not present", detail)
 
     return Verdict(True,
-                   f"{needle!r} found {found}x in {path} ({lines} lines) "
+                   f"{needle!r} found {found}x in {path} ({line_count}) "
                    f"{res.where}", detail)
 
 
@@ -600,8 +601,9 @@ def check_command_exits(claim: Claim) -> Verdict:
     timeout = claim.get("timeout", 60)
     detail = {"cmd": cmd, "cwd": str(cwd), "expected_code": expected}
     try:
-        proc = subprocess.run(cmd, cwd=cwd, shell=True, capture_output=True,
-                              text=True, timeout=timeout)
+        proc = subprocess.run(
+            cmd, cwd=cwd, shell=True, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=timeout)
     except subprocess.TimeoutExpired as exc:
         detail["timeout"] = timeout
         return Verdict(False, f"command timed out after {timeout}s: {cmd}", detail)
