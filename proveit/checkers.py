@@ -516,41 +516,79 @@ def check_path_absent(claim: Claim) -> Verdict:
     return Verdict(True, f"{path} absent {res.where}", detail)
 
 
-def _rename_entries(raw: bytes) -> list[tuple[str, str, str]]:
-    """Parse ``git --name-status -z`` rename records."""
+def _name_status_entries(raw: bytes) -> list[tuple[str, tuple[str, ...]]]:
+    """Parse ``git --name-status -z`` records without path quoting."""
     fields = [field for field in raw.split(b"\0") if field]
-    entries: list[tuple[str, str, str]] = []
+    entries: list[tuple[str, tuple[str, ...]]] = []
     index = 0
     while index < len(fields):
         status = fields[index].decode("utf-8", "replace").lstrip("\n")
         index += 1
-        if status.startswith("R") and index + 1 < len(fields):
-            old = fields[index].decode("utf-8", "replace")
-            new = fields[index + 1].decode("utf-8", "replace")
-            entries.append((status, old, new))
-            index += 2
-        else:
-            index += 1
+        width = 2 if status.startswith(("R", "C")) else 1
+        if index + width > len(fields):
+            break
+        paths = tuple(fields[index + offset].decode("utf-8", "replace")
+                      for offset in range(width))
+        entries.append((status, paths))
+        index += width
     return entries
 
 
 def _history_proves_rename(root: Path, revision: str, src: str,
                            dst: str) -> tuple[bool, str | None]:
-    """Find an actual Git rename from ``src`` to ``dst`` in history."""
-    code, commits, err = _git_text(
-        root, "rev-list", revision, "--", src, dst)
-    if code != 0:
-        return False, err or f"could not walk history at {revision[:12]}"
-    for commit in commits.splitlines():
-        code, raw, err = _git(
-            root, "diff-tree", "--root", "--no-commit-id",
-            "--name-status", "-r", "-M", "-z", commit)
+    """Trace the observed destination backward through uninterrupted lineage."""
+    current, cursor = dst, revision
+    seen: set[tuple[str, str]] = set()
+    while True:
+        code, commit, err = _git_text(
+            root, "log", "--first-parent", "-1", "--format=%H",
+            cursor, "--", current)
+        if code != 0 or not commit:
+            return False, err or f"no history for current destination {current}"
+        marker = (commit, current)
+        if marker in seen:
+            return False, "rename lineage looped unexpectedly"
+        seen.add(marker)
+
+        parent_code, parent, _ = _git_text(
+            root, "rev-parse", "--verify", f"{commit}^1")
+        if parent_code == 0 and parent:
+            code, raw, err = _git(
+                root, "diff", "--name-status", "-M", "-z",
+                parent, commit)
+        else:
+            code, raw, err = _git(
+                root, "diff-tree", "--root", "--no-commit-id",
+                "--name-status", "-r", "-M", "-z", commit)
         if code != 0:
             return False, err or f"could not inspect commit {commit[:12]}"
-        if any(old == src and new == dst
-               for _, old, new in _rename_entries(raw)):
-            return True, f"Git rename in commit {commit[:12]}"
-    return False, None
+
+        found = False
+        for status, paths in _name_status_entries(raw):
+            if status.startswith("R") and len(paths) == 2 and paths[1] == current:
+                found = True
+                old = paths[0]
+                if old == src:
+                    return True, f"Git rename lineage at commit {commit[:12]}"
+                current = old
+                break
+            if len(paths) == 1 and paths[0] == current:
+                found = True
+                if status.startswith("A"):
+                    return False, (f"current destination lineage begins with "
+                                   f"an add at commit {commit[:12]}")
+                if status.startswith("D"):
+                    return False, (f"current destination lineage crosses a "
+                                   f"deletion at commit {commit[:12]}")
+                break
+            if status.startswith("C") and len(paths) == 2 and paths[1] == current:
+                return False, (f"current destination lineage begins with a "
+                               f"copy at commit {commit[:12]}")
+        if not found:
+            return False, f"could not trace {current} through commit {commit[:12]}"
+        if parent_code != 0 or not parent:
+            return False, f"reached repository root before rename from {src}"
+        cursor = parent
 
 
 def _worktree_proves_rename(root: Path, src: str,
@@ -564,7 +602,9 @@ def _worktree_proves_rename(root: Path, src: str,
     if code != 0:
         return False, err or "could not inspect working-tree changes"
     if any(old == src and new == dst
-           for _, old, new in _rename_entries(raw)):
+           for status, paths in _name_status_entries(raw)
+           if status.startswith("R") and len(paths) == 2
+           for old, new in [paths]):
         return True, "Git rename in the working tree"
     return _history_proves_rename(root, head, src, dst)
 

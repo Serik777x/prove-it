@@ -230,6 +230,28 @@ class TestOtherCheckersHonourTheStage:
         assert not verdict.ok
         assert "Git records no rename" in verdict.evidence
 
+    def test_deleted_and_recreated_destination_breaks_rename_lineage(
+            self, repo):
+        git(repo, "mv", "landed.txt", "moved.txt")
+        git(repo, "commit", "-m", "real move")
+        git(repo, "push")
+        (repo / "moved.txt").unlink()
+        git(repo, "add", "moved.txt")
+        git(repo, "commit", "-m", "delete destination")
+        git(repo, "push")
+        (repo / "moved.txt").write_text(
+            "unrelated replacement\n", encoding="utf-8")
+        git(repo, "add", "moved.txt")
+        git(repo, "commit", "-m", "replace destination")
+        git(repo, "push")
+
+        verdict = run("- type: path_moved\n"
+                      "  src: landed.txt\n"
+                      "  dst: moved.txt\n")
+
+        assert not verdict.ok
+        assert "lineage begins with an add" in verdict.evidence
+
     def test_a_directory_resolves_at_the_pushed_stage(self, repo):
         (repo / "pkg").mkdir()
         (repo / "pkg" / "a.txt").write_text("a\n", encoding="utf-8")

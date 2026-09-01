@@ -159,9 +159,11 @@ Omitted means "at least one".
 `path_moved` deliberately checks both ends **and** provenance. A copy that
 left the source in place is not a move, but neither is a deletion beside an
 unrelated pre-existing destination. Pushed claims require a matching Git
-rename in history; worktree claims accept a matching uncommitted Git rename
-or one recorded at HEAD. Outside one repository, endpoint state cannot prove
-the transition, so the checker fails loudly instead of guessing.
+rename in the current destination's uninterrupted backward lineage; deleting
+and recreating the destination breaks that lineage even when an older genuine
+rename exists. Worktree claims accept a matching uncommitted Git rename or the
+same lineage proof at HEAD. Outside one repository, endpoint state cannot
+prove the transition, so the checker fails loudly instead of guessing.
 
 Worktree existence is lexical: a dangling symlink is still a present
 directory entry. It is reported as a symlink with its target and can never
