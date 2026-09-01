@@ -4,8 +4,9 @@ import subprocess
 import sys
 
 import pytest
+import yaml
 
-from proveit.checkers import CHECKERS
+from proveit.checkers import CHECKERS, command_policy
 from proveit.parse import parse_claims
 from proveit.runner import RunResult, verify_text
 
@@ -17,11 +18,12 @@ def git(cwd, *args):
     return proc.stdout.strip()
 
 
-def run(text):
+def run(text, allowed_commands=()):
     claims, errors = parse_claims(text)
     assert errors == [], errors
     claim = claims[0]
-    return CHECKERS[claim.type](claim)
+    with command_policy(allowed_commands):
+        return CHECKERS[claim.type](claim)
 
 
 @pytest.fixture
@@ -110,14 +112,16 @@ class TestCommandExits:
     def test_expected_nonzero_exit_passes_with_evidence(self, tmp_path):
         cmd = f'"{sys.executable}" -c "import sys; sys.exit(3)"'
         verdict = run("- type: command_exits\n"
-                      f"  cmd: {cmd!r}\n  code: 3\n  cwd: {str(tmp_path)!r}\n")
+                      f"  cmd: {cmd!r}\n  code: 3\n  cwd: {str(tmp_path)!r}\n",
+                      [sys.executable])
         assert verdict.ok
         assert verdict.detail["actual_code"] == 3
 
     def test_wrong_exit_fails(self, tmp_path):
         cmd = f'"{sys.executable}" -c "import sys; sys.exit(4)"'
         verdict = run("- type: command_exits\n"
-                      f"  cmd: {cmd!r}\n  code: 0\n  cwd: {str(tmp_path)!r}\n")
+                      f"  cmd: {cmd!r}\n  code: 0\n  cwd: {str(tmp_path)!r}\n",
+                      [sys.executable])
         assert not verdict.ok and verdict.detail["actual_code"] == 4
 
     def test_non_utf8_output_returns_evidence_instead_of_raising(self,
@@ -126,10 +130,26 @@ class TestCommandExits:
                '"import sys; sys.stdout.buffer.write(bytes([255]))"')
         result = verify_text(
             "- type: command_exits\n"
-            f"  cmd: {cmd!r}\n  cwd: {str(tmp_path)!r}\n")
+            f"  cmd: {cmd!r}\n  cwd: {str(tmp_path)!r}\n",
+            allowed_commands=[sys.executable])
         assert isinstance(result, RunResult)
         assert result.exit_code == 0
         assert "stdout='�'" in result.results[0].verdict.evidence
+
+    def test_default_policy_denies_mutation_before_execution(self, tmp_path):
+        target = tmp_path / "must-not-exist.txt"
+        cmd = (f'"{sys.executable}" -c '
+               f'"from pathlib import Path; Path({str(target)!r}).write_text(\'x\')"')
+
+        result = verify_text(yaml.safe_dump([{
+            "type": "command_exits",
+            "cmd": cmd,
+            "cwd": str(tmp_path),
+        }], sort_keys=False))
+
+        assert result.exit_code == 1
+        assert "command policy denied" in result.results[0].verdict.evidence
+        assert not target.exists()
 
 
 class TestGitCheckers:

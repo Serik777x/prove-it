@@ -68,6 +68,10 @@ The tracking ref is a **local cache**. v1 makes no network calls (a brief
 no-go), so a stale `origin/*` is the reader's `git fetch` to do.
 A local branch configured as an upstream is not a landing: the upstream must
 resolve under `refs/remotes/`, or pushed-state resolution fails loudly.
+In a detached-SHA checkout, one unambiguous non-symbolic remote-tracking ref
+containing HEAD supplies that boundary. No match or multiple matches is
+unresolvable rather than guessed, which keeps review/CI checkouts useful
+without letting a local ref masquerade as publication.
 
 ### Two degradations, and the difference is the point
 
@@ -99,7 +103,14 @@ parse error is an M001 change and was left alone.
 
 | type | required | optional | asserts |
 |---|---|---|---|
-| `command_exits` | `cmd` | `code` (0), `cwd` (`.`), `timeout` (60) | a command runs and exits with the expected code |
+| `command_exits` | `cmd` | `code` (0), `cwd` (`.`), `timeout` (60) | a caller-allowed executable runs and exits with the expected code |
+
+`command_exits` is default-deny. Executable authority comes from the caller
+(`prove-it verify ... --allow-command EXECUTABLE`), outside the claims file,
+and cannot be widened by an agent-authored claim. The command string is split
+into argv and executed with `shell=False`; redirection, pipelines and other
+shell syntax are never interpreted. A future closeout adapter must preserve
+that default-deny policy and choose its allowlist on the claimant host.
 
 ## Git
 

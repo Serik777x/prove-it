@@ -34,7 +34,11 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
+import shutil
 import subprocess
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from dataclasses import dataclass
 from typing import Callable
@@ -46,6 +50,29 @@ from .parse import Claim
 
 GIT_TIMEOUT = 30
 EVIDENCE_LIMIT = 500
+
+_ALLOWED_COMMANDS: ContextVar[frozenset[str]] = ContextVar(
+    "prove_it_allowed_commands", default=frozenset())
+
+
+def _canonical_executable(value: str) -> str:
+    located = shutil.which(value) or value
+    return os.path.normcase(os.path.abspath(located))
+
+
+@contextmanager
+def command_policy(commands=()):
+    """Install caller-owned executable authority for one verification run.
+
+    Claims cannot widen this set. The CLI and future closeout adapter choose
+    it outside the claims document; an omitted policy denies every command.
+    """
+    allowed = frozenset(_canonical_executable(str(item)) for item in commands)
+    token = _ALLOWED_COMMANDS.set(allowed)
+    try:
+        yield
+    finally:
+        _ALLOWED_COMMANDS.reset(token)
 
 
 @dataclass(frozen=True)
@@ -216,10 +243,31 @@ def _landed_commit(root: Path) -> tuple[str | None, str, bool]:
     The tracking ref is a LOCAL CACHE. v1 makes no network calls, so a
     stale `origin/*` is the reader's `git fetch` to do.
     """
-    code, upstream_ref, _ = _git_text(
-        root, "rev-parse", "--symbolic-full-name", "@{upstream}")
-    if code != 0 or not upstream_ref:
-        return None, _why_nothing_landed(root), False
+    branch_code, _, _ = _git_text(
+        root, "symbolic-ref", "--quiet", "--short", "HEAD")
+    if branch_code == 0:
+        code, upstream_ref, _ = _git_text(
+            root, "rev-parse", "--symbolic-full-name", "@{upstream}")
+        if code != 0 or not upstream_ref:
+            return None, _why_nothing_landed(root), False
+    else:
+        code, refs, err = _git_text(
+            root, "for-each-ref", "--format=%(refname)%09%(symref)",
+            "--contains", "HEAD", "refs/remotes")
+        if code != 0:
+            return None, err or "could not inspect remote-tracking refs", False
+        candidates = []
+        for line in refs.splitlines():
+            ref, _, symref = line.partition("\t")
+            if ref and not symref:
+                candidates.append(ref)
+        if len(candidates) != 1:
+            reason = ("no remote-tracking ref contains detached HEAD"
+                      if not candidates else
+                      f"detached HEAD is contained by ambiguous remote refs "
+                      f"{candidates}")
+            return None, reason, False
+        upstream_ref = candidates[0]
     remote_prefix = "refs/remotes/"
     if not upstream_ref.startswith(remote_prefix):
         return (None,
@@ -766,8 +814,29 @@ def check_command_exits(claim: Claim) -> Verdict:
     timeout = claim.get("timeout", 60)
     detail = {"cmd": cmd, "cwd": str(cwd), "expected_code": expected}
     try:
+        argv = shlex.split(cmd, posix=os.name != "nt")
+    except ValueError as exc:
+        return Verdict(False, f"command could not be parsed: {exc}", detail)
+    if os.name == "nt":
+        argv = [item[1:-1] if len(item) >= 2 and item[0] == item[-1]
+                and item[0] in "\"'" else item for item in argv]
+    if not argv:
+        return Verdict(False, "command has no executable", detail)
+    detail["argv"] = argv
+    executable = _canonical_executable(argv[0])
+    allowed = _ALLOWED_COMMANDS.get()
+    detail["executable"] = executable
+    detail["allowed_commands"] = sorted(allowed)
+    if executable not in allowed:
+        return Verdict(
+            False,
+            f"command policy denied executable {argv[0]!r}; the caller must "
+            "allow it outside the claims file",
+            detail,
+        )
+    try:
         proc = subprocess.run(
-            cmd, cwd=cwd, shell=True, capture_output=True, text=True,
+            argv, cwd=cwd, shell=False, capture_output=True, text=True,
             encoding="utf-8", errors="replace", timeout=timeout)
     except subprocess.TimeoutExpired as exc:
         detail["timeout"] = timeout

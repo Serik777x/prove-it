@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from .checkers import CHECKERS, Verdict
+from .checkers import CHECKERS, Verdict, command_policy
 from .parse import Claim, ParseError, parse_claims
 
 
@@ -44,24 +44,25 @@ class RunResult:
         }
 
 
-def verify_text(text: str) -> RunResult:
+def verify_text(text: str, *, allowed_commands=()) -> RunResult:
     claims, errors = parse_claims(text)
     if errors:
         return RunResult([], errors)
 
     results = []
-    for claim in claims:
-        checker = CHECKERS.get(claim.type)
-        if checker is None:
-            # Grammar/checker equality is pinned by tests, but a runtime hard
-            # failure is still safer than silently skipping after packaging
-            # or version skew.
-            verdict = Verdict(
-                False,
-                f"no checker is installed for known type {claim.type!r}",
-                {"type": claim.type, "error": "checker_missing"},
-            )
-        else:
-            verdict = checker(claim)
-        results.append(ClaimResult(claim, verdict))
+    with command_policy(allowed_commands):
+        for claim in claims:
+            checker = CHECKERS.get(claim.type)
+            if checker is None:
+                # Grammar/checker equality is pinned by tests, but a runtime hard
+                # failure is still safer than silently skipping after packaging
+                # or version skew.
+                verdict = Verdict(
+                    False,
+                    f"no checker is installed for known type {claim.type!r}",
+                    {"type": claim.type, "error": "checker_missing"},
+                )
+            else:
+                verdict = checker(claim)
+            results.append(ClaimResult(claim, verdict))
     return RunResult(results, [])

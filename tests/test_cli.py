@@ -107,7 +107,8 @@ def test_non_utf8_command_output_still_emits_a_verdict(tmp_path, json_mode):
         f"  cmd: {cmd!r}\n  cwd: {str(tmp_path)!r}\n",
         encoding="utf-8",
     )
-    args = [str(installed_console()), "verify", str(claims)]
+    args = [str(installed_console()), "verify", str(claims),
+            "--allow-command", sys.executable]
     if json_mode:
         args.append("--json")
     proc = subprocess.run(args, capture_output=True, text=True)

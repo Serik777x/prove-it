@@ -19,10 +19,16 @@ statements against actual disk and git.
 ```
 $ prove-it verify claims.yaml
 $ prove-it verify claims.yaml --json
+$ prove-it verify claims.yaml --allow-command git
 ```
 
 Exit `0` every claim proved, `1` a claim failed, `2` the claims file was
 malformed.
+
+`command_exits` is default-deny. The caller—not the claims file—must name
+each permitted executable with `--allow-command`; commands run as argv with
+no shell. This keeps an agent-authored closeout claim from granting itself
+the authority to mutate the machine.
 
 The versioned negative example is stable: its target deliberately omits a
 sentinel that must remain absent, so adding a real checker cannot silently

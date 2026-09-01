@@ -164,7 +164,7 @@ class TestTheLyingReceipt:
              "dst": str(tmp_path / "moved.txt")},
         ], sort_keys=False)
 
-        result = verify_text(claims)
+        result = verify_text(claims, allowed_commands=[sys.executable])
 
         assert result.exit_code == 1
         assert [item.verdict.ok for item in result.results] == [True, True, False]
@@ -480,6 +480,23 @@ class TestDegradation:
         assert not verdict.ok
         assert "is not a remote-tracking ref" in verdict.evidence
         assert "stage: worktree" in verdict.evidence
+
+    def test_detached_head_uses_one_containing_remote_ref(self, repo):
+        git(repo, "checkout", "--detach", "HEAD")
+
+        verdict = run("- type: path_exists\n  path: landed.txt\n")
+
+        assert verdict.ok, verdict.evidence
+        assert "origin/main" in verdict.evidence
+
+    def test_detached_head_refuses_ambiguous_remote_refs(self, repo):
+        git(repo, "update-ref", "refs/remotes/backup/main", "HEAD")
+        git(repo, "checkout", "--detach", "HEAD")
+
+        verdict = run("- type: path_exists\n  path: landed.txt\n")
+
+        assert not verdict.ok
+        assert "ambiguous remote refs" in verdict.evidence
 
     def test_an_empty_repo_refuses_to_guess(self, tmp_path, monkeypatch):
         work = tmp_path / "empty"

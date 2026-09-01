@@ -19,6 +19,11 @@ def _parser() -> argparse.ArgumentParser:
     verify.add_argument("file", help="claims YAML path, or - for stdin")
     verify.add_argument("--json", action="store_true", dest="as_json",
                         help="emit one machine-readable JSON document")
+    verify.add_argument(
+        "--allow-command", action="append", default=[], metavar="EXECUTABLE",
+        help=("allow one executable for command_exits; repeat as needed "
+              "(default: deny all commands)"),
+    )
     return parser
 
 
@@ -47,7 +52,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     text, read_errors = _read(args.file)
-    result = RunResult([], read_errors) if read_errors else verify_text(text or "")
+    result = (RunResult([], read_errors) if read_errors else
+              verify_text(text or "", allowed_commands=args.allow_command))
 
     if args.as_json:
         print(json.dumps(result.as_detail(args.file), indent=2,
